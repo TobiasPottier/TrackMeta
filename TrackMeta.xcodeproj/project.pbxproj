@@ -6,6 +6,17 @@
 	objectVersion = 77;
 	objects = {
 
+/* Begin PBXBuildFile section */
+		077112D32F96EE240074D510 /* UsageSnapshot.swift in Sources */ = {isa = PBXBuildFile; fileRef = 077112C72F96EE240074D510 /* UsageSnapshot.swift */; };
+		077112D42F96EE240074D510 /* TrackMetaApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = 077112C42F96EE240074D510 /* TrackMetaApp.swift */; };
+		077112D52F96EE240074D510 /* UsageViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 077112CC2F96EE240074D510 /* UsageViewModel.swift */; };
+		077112D62F96EE240074D510 /* UsagePopover.swift in Sources */ = {isa = PBXBuildFile; fileRef = 077112D02F96EE240074D510 /* UsagePopover.swift */; };
+		077112D72F96EE240074D510 /* ClaudeUsageClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = 077112C92F96EE240074D510 /* ClaudeUsageClient.swift */; };
+		077112D82F96EE240074D510 /* SettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 077112CF2F96EE240074D510 /* SettingsView.swift */; };
+		077112D92F96EE240074D510 /* MenuBarLabel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 077112CE2F96EE240074D510 /* MenuBarLabel.swift */; };
+		0AA0000012F96EE240074D510 /* TrackerLogo.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0AA0000022F96EE240074D510 /* TrackerLogo.swift */; };
+/* End PBXBuildFile section */
+
 /* Begin PBXContainerItemProxy section */
 		072D9CD52F96ECBB00FD4B20 /* PBXContainerItemProxy */ = {
 			isa = PBXContainerItemProxy;
@@ -27,6 +38,14 @@
 		072D9CC12F96ECB800FD4B20 /* TrackMeta.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = TrackMeta.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		072D9CD42F96ECBB00FD4B20 /* TrackMetaTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = TrackMetaTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		072D9CDE2F96ECBB00FD4B20 /* TrackMetaUITests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = TrackMetaUITests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
+		077112C42F96EE240074D510 /* TrackMetaApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TrackMetaApp.swift; sourceTree = "<group>"; };
+		077112C72F96EE240074D510 /* UsageSnapshot.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UsageSnapshot.swift; sourceTree = "<group>"; };
+		077112C92F96EE240074D510 /* ClaudeUsageClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ClaudeUsageClient.swift; sourceTree = "<group>"; };
+		077112CC2F96EE240074D510 /* UsageViewModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UsageViewModel.swift; sourceTree = "<group>"; };
+		077112CE2F96EE240074D510 /* MenuBarLabel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MenuBarLabel.swift; sourceTree = "<group>"; };
+		077112CF2F96EE240074D510 /* SettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SettingsView.swift; sourceTree = "<group>"; };
+		077112D02F96EE240074D510 /* UsagePopover.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UsagePopover.swift; sourceTree = "<group>"; };
+		0AA0000022F96EE240074D510 /* TrackerLogo.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TrackerLogo.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFileSystemSynchronizedRootGroup section */
@@ -79,6 +98,7 @@
 				072D9CD72F96ECBB00FD4B20 /* TrackMetaTests */,
 				072D9CE12F96ECBB00FD4B20 /* TrackMetaUITests */,
 				072D9CC22F96ECB800FD4B20 /* Products */,
+				077112D22F96EE240074D510 /* Sources */,
 			);
 			sourceTree = "<group>";
 		};
@@ -90,6 +110,62 @@
 				072D9CDE2F96ECBB00FD4B20 /* TrackMetaUITests.xctest */,
 			);
 			name = Products;
+			sourceTree = "<group>";
+		};
+		077112C52F96EE240074D510 /* App */ = {
+			isa = PBXGroup;
+			children = (
+				077112C42F96EE240074D510 /* TrackMetaApp.swift */,
+			);
+			path = App;
+			sourceTree = "<group>";
+		};
+		077112C82F96EE240074D510 /* Models */ = {
+			isa = PBXGroup;
+			children = (
+				077112C72F96EE240074D510 /* UsageSnapshot.swift */,
+			);
+			path = Models;
+			sourceTree = "<group>";
+		};
+		077112CB2F96EE240074D510 /* Services */ = {
+			isa = PBXGroup;
+			children = (
+				077112C92F96EE240074D510 /* ClaudeUsageClient.swift */,
+			);
+			path = Services;
+			sourceTree = "<group>";
+		};
+		077112CD2F96EE240074D510 /* ViewModels */ = {
+			isa = PBXGroup;
+			children = (
+				077112CC2F96EE240074D510 /* UsageViewModel.swift */,
+			);
+			path = ViewModels;
+			sourceTree = "<group>";
+		};
+		077112D12F96EE240074D510 /* Views */ = {
+			isa = PBXGroup;
+			children = (
+				077112CE2F96EE240074D510 /* MenuBarLabel.swift */,
+				077112CF2F96EE240074D510 /* SettingsView.swift */,
+				0AA0000022F96EE240074D510 /* TrackerLogo.swift */,
+				077112D02F96EE240074D510 /* UsagePopover.swift */,
+			);
+			path = Views;
+			sourceTree = "<group>";
+		};
+		077112D22F96EE240074D510 /* Sources */ = {
+			isa = PBXGroup;
+			children = (
+				077112C52F96EE240074D510 /* App */,
+				077112C82F96EE240074D510 /* Models */,
+				077112CB2F96EE240074D510 /* Services */,
+				077112CD2F96EE240074D510 /* ViewModels */,
+				077112D12F96EE240074D510 /* Views */,
+			);
+			name = Sources;
+			path = TrackMeta/Sources;
 			sourceTree = "<group>";
 		};
 /* End PBXGroup section */
@@ -236,6 +312,14 @@
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				077112D32F96EE240074D510 /* UsageSnapshot.swift in Sources */,
+				077112D42F96EE240074D510 /* TrackMetaApp.swift in Sources */,
+				077112D52F96EE240074D510 /* UsageViewModel.swift in Sources */,
+				077112D62F96EE240074D510 /* UsagePopover.swift in Sources */,
+				077112D72F96EE240074D510 /* ClaudeUsageClient.swift in Sources */,
+				077112D82F96EE240074D510 /* SettingsView.swift in Sources */,
+				077112D92F96EE240074D510 /* MenuBarLabel.swift in Sources */,
+				0AA0000012F96EE240074D510 /* TrackerLogo.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
