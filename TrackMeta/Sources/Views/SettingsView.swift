@@ -1,7 +1,8 @@
 import SwiftUI
+import AppKit
 
 struct SettingsView: View {
-    let model: UsageViewModel
+    @Bindable var model: UsageViewModel
 
     var body: some View {
         VStack(alignment: .leading, spacing: 20) {
@@ -50,6 +51,7 @@ struct SettingsView: View {
             )
             .ignoresSafeArea()
         )
+        .background(FloatingWindowConfigurator())
         .foregroundStyle(.white)
     }
 
@@ -115,5 +117,22 @@ struct SettingsView: View {
             RoundedRectangle(cornerRadius: 12, style: .continuous)
                 .stroke(BrandPalette.border, lineWidth: 1)
         )
+    }
+}
+
+/// Pins the hosting window above all other app windows so Settings stays on top.
+private struct FloatingWindowConfigurator: NSViewRepresentable {
+    func makeNSView(context: Context) -> NSView { NSView() }
+
+    func updateNSView(_ nsView: NSView, context: Context) {
+        DispatchQueue.main.async {
+            guard let window = nsView.window else { return }
+            // One rank above the menu-bar popup (which uses `.statusBar`) so Settings
+            // is always visually in front of our own floating panels.
+            window.level = NSWindow.Level(rawValue: NSWindow.Level.statusBar.rawValue + 1)
+            window.collectionBehavior.insert([.canJoinAllSpaces, .fullScreenAuxiliary])
+            window.hidesOnDeactivate = false
+            window.orderFrontRegardless()
+        }
     }
 }

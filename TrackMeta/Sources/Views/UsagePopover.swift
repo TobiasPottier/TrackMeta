@@ -1,31 +1,58 @@
 import SwiftUI
 import Combine
+import Charts
 
 struct UsagePopover: View {
-    @Bindable var model: UsageViewModel
+    static let preferredWidth: CGFloat = 560
 
-    @State private var isOpen: Bool = false
+    @Bindable var model: UsageViewModel
+    var presenter: PopoverPresenter
+    var notchAttached: Bool = false
+    var notchWidth: CGFloat = 0
+    var onTogglePinSessions: (() -> Void)? = nil
+
+    // Vertical distance over which the top narrows from full width down to the notch width.
+    private let neckHeight: CGFloat = 20
+
+    private var isOpen: Bool { presenter.isOpen }
+
+    private var panelShape: AnyShape {
+        if notchAttached, notchWidth > 0 {
+            return AnyShape(NotchIslandShape(
+                notchWidth: notchWidth,
+                neckHeight: neckHeight,
+                bottomRadius: 22
+            ))
+        }
+        return AnyShape(UnevenRoundedRectangle(
+            topLeadingRadius: 14,
+            bottomLeadingRadius: 18,
+            bottomTrailingRadius: 18,
+            topTrailingRadius: 14,
+            style: .continuous
+        ))
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
             header
-                .padding(.horizontal, 18)
-                .padding(.top, 16)
+                .padding(.horizontal, 22)
+                .padding(.top, notchAttached ? neckHeight + 14 : 18)
                 .padding(.bottom, 14)
 
             Divider().background(BrandPalette.border)
 
             content
-                .padding(.horizontal, 18)
-                .padding(.vertical, 14)
+                .padding(.horizontal, 22)
+                .padding(.vertical, 16)
 
             Divider().background(BrandPalette.border)
 
             footer
-                .padding(.horizontal, 18)
+                .padding(.horizontal, 22)
                 .padding(.vertical, 10)
         }
-        .frame(width: 320)
+        .frame(width: Self.preferredWidth)
         .background(
             LinearGradient(
                 colors: [BrandPalette.panelTop, BrandPalette.panelBottom],
@@ -34,18 +61,28 @@ struct UsagePopover: View {
             )
         )
         .foregroundStyle(.white)
-        .scaleEffect(isOpen ? 1.0 : 0.92, anchor: .top)
+        .clipShape(panelShape)
+        .scaleEffect(
+            x: isOpen ? 1.0 : collapsedScaleX,
+            y: isOpen ? 1.0 : collapsedScaleY,
+            anchor: .top
+        )
+        .blur(radius: isOpen ? 0 : 14)
         .opacity(isOpen ? 1.0 : 0.0)
-        .offset(y: isOpen ? 0 : -8)
-        .onAppear {
-            isOpen = false
-            withAnimation(.spring(response: 0.32, dampingFraction: 0.78)) {
-                isOpen = true
-            }
-        }
-        .onDisappear {
-            isOpen = false
-        }
+    }
+
+    /// Starting horizontal scale: the shape begins right at the notch's width
+    /// so its top edge lines up with the visible pill.
+    private var collapsedScaleX: CGFloat {
+        guard notchAttached, notchWidth > 0 else { return 0.94 }
+        let ratio = notchWidth / Self.preferredWidth
+        return max(0.34, min(0.55, ratio + 0.02))
+    }
+
+    /// Starting vertical scale: collapsed flat against the notch so the panel
+    /// feels like it's unfurling from the pill rather than appearing out of nowhere.
+    private var collapsedScaleY: CGFloat {
+        notchAttached ? 0.12 : 0.9
     }
 
     private var header: some View {
@@ -93,9 +130,20 @@ struct UsagePopover: View {
                 failure(message)
 
             case .loaded(let snap):
-                UsageRow(title: "5-hour session", bucket: snap.fiveHour)
-                UsageRow(title: "Weekly",         bucket: snap.sevenDay)
+                UsageRow(title: "5-hour session", bucket: snap.fiveHour, sessionWindow: SessionWindow.fiveHourSeconds)
+                SessionUsageChart(history: model.history, bucket: snap.fiveHour)
+                UsageRow(title: "Weekly",         bucket: snap.sevenDay, sessionWindow: SessionWindow.sevenDaySeconds)
             }
+
+            Divider()
+                .background(BrandPalette.border)
+                .padding(.vertical, 2)
+
+            SessionsSection(
+                sessions: model.sessions,
+                isPinned: model.sessionsPinned,
+                onTogglePin: onTogglePinSessions
+            )
         }
     }
 
@@ -150,6 +198,15 @@ struct UsagePopover: View {
 private struct UsageRow: View {
     let title: String
     let bucket: UsageBucket
+    let sessionWindow: TimeInterval?
+
+    @State private var now: Date = Date()
+    private let ticker = Timer.publish(every: 30, on: .main, in: .common).autoconnect()
+
+    private var stripeProgress: Double? {
+        guard let sessionWindow else { return nil }
+        return bucket.sessionProgress(at: now, windowLength: sessionWindow)
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
@@ -163,8 +220,9 @@ private struct UsageRow: View {
                     .foregroundStyle(color(for: bucket.percent))
             }
 
-            UsageBar(percent: bucket.percent, color: color(for: bucket.percent))
+            UsageBar(percent: bucket.percent, color: color(for: bucket.percent), stripeProgress: stripeProgress)
                 .frame(height: 6)
+                .onReceive(ticker) { now = $0 }
 
             if let reset = bucket.resetsAt {
                 Text("Resets \(Self.resetFormatter.string(from: reset)) · \(Self.timeLeft(until: reset)) left")
@@ -198,12 +256,14 @@ private struct UsageRow: View {
         return h > 0 ? "\(h)h \(m)m" : "\(m)m"
     }
 
-    private func color(for percent: Double) -> Color {
-        switch percent {
-        case ..<50: return Color(red: 0.34, green: 0.78, blue: 0.47)
-        case ..<80: return BrandPalette.accent
-        default:    return Color(red: 0.95, green: 0.35, blue: 0.35)
-        }
+    private func color(for percent: Double) -> Color { usageColor(for: percent) }
+}
+
+func usageColor(for percent: Double) -> Color {
+    switch percent {
+    case ..<50: return Color(red: 0.34, green: 0.78, blue: 0.47)
+    case ..<80: return BrandPalette.accent
+    default:    return Color(red: 0.95, green: 0.35, blue: 0.35)
     }
 }
 
@@ -293,6 +353,7 @@ private struct PeakHoursIndicator: View {
 private struct UsageBar: View {
     let percent: Double
     let color: Color
+    var stripeProgress: Double? = nil
 
     var body: some View {
         GeometryReader { geo in
@@ -314,7 +375,212 @@ private struct UsageBar: View {
                             geo.size.width * CGFloat(max(0, min(100, percent)) / 100)
                         )
                     )
+
+                if let stripeProgress {
+                    let stripeWidth: CGFloat = 2
+                    let x = geo.size.width * CGFloat(min(1, max(0, stripeProgress)))
+                    let clampedX = min(max(stripeWidth / 2, x), geo.size.width - stripeWidth / 2)
+                    Rectangle()
+                        .fill(Color.white.opacity(0.95))
+                        .frame(width: stripeWidth, height: geo.size.height + 4)
+                        .offset(x: clampedX - stripeWidth / 2, y: 0)
+                        .shadow(color: Color.black.opacity(0.35), radius: 1, x: 0, y: 0)
+                }
             }
         }
+    }
+}
+
+private struct SessionUsageChart: View {
+    let history: [UsageSample]
+    let bucket: UsageBucket
+
+    @State private var now: Date = Date()
+    private let ticker = Timer.publish(every: 30, on: .main, in: .common).autoconnect()
+
+    private var sessionStart: Date {
+        if let resetsAt = bucket.resetsAt {
+            return resetsAt.addingTimeInterval(-SessionWindow.fiveHourSeconds)
+        }
+        return history.first?.timestamp ?? now.addingTimeInterval(-SessionWindow.fiveHourSeconds)
+    }
+
+    private var sessionEnd: Date {
+        bucket.resetsAt ?? now
+    }
+
+    private var chartColor: Color { usageColor(for: bucket.percent) }
+
+    private static let boundaryFormatter: DateFormatter = {
+        let f = DateFormatter()
+        f.dateFormat = "HH:mm"
+        return f
+    }()
+
+    @ViewBuilder
+    private func sessionBoundaryLabel(title: String, date: Date) -> some View {
+        HStack(spacing: 4) {
+            Text(title)
+                .font(.system(size: 9, weight: .semibold))
+                .tracking(0.4)
+                .foregroundStyle(Color.white.opacity(0.55))
+            Text(Self.boundaryFormatter.string(from: date))
+                .font(.system(size: 10, weight: .medium))
+                .monospacedDigit()
+                .foregroundStyle(Color.white.opacity(0.85))
+        }
+        .padding(.horizontal, 5)
+        .padding(.vertical, 1)
+        .background(
+            Capsule().fill(Color.black.opacity(0.3))
+        )
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Chart {
+                ForEach(history, id: \.timestamp) { sample in
+                    AreaMark(
+                        x: .value("Time", sample.timestamp),
+                        y: .value("Usage", sample.fiveHourPercent)
+                    )
+                    .foregroundStyle(
+                        LinearGradient(
+                            colors: [chartColor.opacity(0.35), chartColor.opacity(0.0)],
+                            startPoint: .top,
+                            endPoint: .bottom
+                        )
+                    )
+                    .interpolationMethod(.monotone)
+
+                    LineMark(
+                        x: .value("Time", sample.timestamp),
+                        y: .value("Usage", sample.fiveHourPercent)
+                    )
+                    .foregroundStyle(chartColor)
+                    .lineStyle(StrokeStyle(lineWidth: 1.5, lineCap: .round, lineJoin: .round))
+                    .interpolationMethod(.monotone)
+                }
+
+                LineMark(
+                    x: .value("Time", sessionStart),
+                    y: .value("Pace", 0),
+                    series: .value("Series", "pace")
+                )
+                .foregroundStyle(Color.white.opacity(0.25))
+                .lineStyle(StrokeStyle(lineWidth: 1, dash: [3, 3]))
+
+                LineMark(
+                    x: .value("Time", sessionEnd),
+                    y: .value("Pace", 100),
+                    series: .value("Series", "pace")
+                )
+                .foregroundStyle(Color.white.opacity(0.25))
+                .lineStyle(StrokeStyle(lineWidth: 1, dash: [3, 3]))
+                .annotation(position: .topLeading, alignment: .trailing, spacing: 2) {
+                    sessionBoundaryLabel(title: "End", date: sessionEnd)
+                }
+
+                RuleMark(x: .value("Now", min(max(now, sessionStart), sessionEnd)))
+                    .foregroundStyle(Color.white.opacity(0.55))
+                    .lineStyle(StrokeStyle(lineWidth: 1))
+
+                PointMark(
+                    x: .value("Now", min(max(now, sessionStart), sessionEnd)),
+                    y: .value("Usage", bucket.percent)
+                )
+                .symbolSize(36)
+                .foregroundStyle(chartColor)
+                .annotation(position: .trailing, alignment: .leading, spacing: 4) {
+                    Text("\(Int(bucket.percent.rounded()))%")
+                        .font(.system(size: 10, weight: .semibold))
+                        .monospacedDigit()
+                        .foregroundStyle(chartColor)
+                        .padding(.horizontal, 5)
+                        .padding(.vertical, 1)
+                        .background(
+                            Capsule().fill(Color.black.opacity(0.35))
+                        )
+                        .overlay(
+                            Capsule().stroke(chartColor.opacity(0.5), lineWidth: 0.5)
+                        )
+                }
+            }
+            .chartXScale(domain: sessionStart...sessionEnd)
+            .chartYScale(domain: 0...100)
+            .chartYAxis(.hidden)
+            .chartXAxis(.hidden)
+            .frame(height: 180)
+            .onReceive(ticker) { now = $0 }
+        }
+        .padding(12)
+        .background(
+            RoundedRectangle(cornerRadius: 10, style: .continuous)
+                .fill(Color.white.opacity(0.04))
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 10, style: .continuous)
+                .stroke(BrandPalette.border, lineWidth: 1)
+        )
+    }
+}
+
+/// Shape that sits flush against the notch: the top edge is exactly `notchWidth`
+/// and fans outward over `neckHeight` to the full width, ending in rounded bottom corners.
+struct NotchIslandShape: Shape {
+    var notchWidth: CGFloat
+    var neckHeight: CGFloat
+    var bottomRadius: CGFloat
+
+    func path(in rect: CGRect) -> Path {
+        var p = Path()
+        let W = rect.width
+        let H = rect.height
+        let r = min(bottomRadius, min(W, H) / 2)
+        let nh = min(neckHeight, H - r)
+        let inset = max(0, (W - notchWidth) / 2)
+
+        // Tangent-handle lengths. Both endpoints of the neck curve carry a
+        // *vertical* tangent so the curve flows continuously into the notch
+        // side at the top and into the panel side at the bottom — no corner.
+        let topHandle    = nh * 0.62
+        let bottomHandle = nh * 0.42
+
+        // Top-left corner of the notch
+        p.move(to: CGPoint(x: inset, y: 0))
+
+        // Neck: notch edge → full-width left side. Vertical tangents at both ends.
+        p.addCurve(
+            to: CGPoint(x: 0, y: nh),
+            control1: CGPoint(x: inset, y: topHandle),
+            control2: CGPoint(x: 0, y: nh - bottomHandle)
+        )
+
+        // Left edge down to bottom-left corner
+        p.addLine(to: CGPoint(x: 0, y: H - r))
+        p.addQuadCurve(
+            to: CGPoint(x: r, y: H),
+            control: CGPoint(x: 0, y: H)
+        )
+
+        // Bottom edge
+        p.addLine(to: CGPoint(x: W - r, y: H))
+        p.addQuadCurve(
+            to: CGPoint(x: W, y: H - r),
+            control: CGPoint(x: W, y: H)
+        )
+
+        // Right edge up to the neck
+        p.addLine(to: CGPoint(x: W, y: nh))
+
+        // Mirror neck: full-width right side → notch edge.
+        p.addCurve(
+            to: CGPoint(x: W - inset, y: 0),
+            control1: CGPoint(x: W, y: nh - bottomHandle),
+            control2: CGPoint(x: W - inset, y: topHandle)
+        )
+
+        p.closeSubpath()
+        return p
     }
 }
