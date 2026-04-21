@@ -6,7 +6,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 TrackMeta is a macOS menu bar (`MenuBarExtra`) SwiftUI app that shows Claude Max usage. It does **not** use the public Anthropic API's usage endpoints (those don't expose Max subscription usage). Instead, it sends a cheap 1-token `POST /v1/messages` request and reads the rate-limit utilization from the **response headers** (`anthropic-ratelimit-unified-5h-utilization` / `-7d-utilization` and their `-reset` counterparts).
 
-Note: the README describes an older design that used a `claude.ai` session cookie pasted into Settings. The current implementation instead reads the Claude Code CLI's OAuth access token out of the macOS Keychain (service `Claude Code-credentials`, JSON value, `claudeAiOauth.accessToken`). If you see references to `sessionKey` / `SessionKeyStore` in docs, they're stale.
+Credentials come from the Claude Code CLI's OAuth access token, read out of the macOS Keychain (service `Claude Code-credentials`, JSON value, `claudeAiOauth.accessToken`). The app does not store credentials of its own.
 
 ## Build / run / test
 
@@ -67,6 +67,5 @@ Key invariants to preserve when editing:
 ## Things that are easy to get wrong
 
 - The project has a doubly-nested layout: repo root contains `TrackMeta/` which contains both the `.xcodeproj` and the source `TrackMeta/` group. Paths in build commands must reflect this.
-- `README.md` is out of date (cookie-based flow). Prefer code over README when they disagree.
 - Do not add the App Sandbox's default restrictions back — outbound HTTPS to `api.anthropic.com` must work.
 - The Keychain service string `"Claude Code-credentials"` is literal (with space and capital C) — it's what the Claude Code CLI writes. Don't "fix" the spacing.
