@@ -4,6 +4,7 @@ struct SessionsSection: View {
     let sessions: [ClaudeSession]
     var isPinned: Bool = false
     var onTogglePin: (() -> Void)? = nil
+    var onDismissSession: ((String) -> Void)? = nil
 
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
@@ -11,11 +12,45 @@ struct SessionsSection: View {
             if sessions.isEmpty {
                 emptyState
             } else {
-                ForEach(sessions) { session in
-                    SessionRow(session: session)
+                ForEach(groupedSessions, id: \.key) { group in
+                    VStack(alignment: .leading, spacing: 6) {
+                        Text(group.key)
+                            .font(.system(size: 10, weight: .medium).monospaced())
+                            .foregroundStyle(BrandPalette.muted.opacity(0.7))
+                            .tracking(0.2)
+                            .padding(.top, 2)
+
+                        ForEach(group.sessions) { session in
+                            SessionRow(
+                                session: session,
+                                onDismiss: onDismissSession.map { dismiss in
+                                    { dismiss(session.sessionId) }
+                                }
+                            )
+                        }
+                    }
                 }
             }
         }
+    }
+
+    private var groupedSessions: [SessionGroup] {
+        var order: [String] = []
+        var buckets: [String: [ClaudeSession]] = [:]
+        for session in sessions {
+            let key = session.cwdDisplayName ?? "Unknown folder"
+            if buckets[key] == nil {
+                order.append(key)
+                buckets[key] = []
+            }
+            buckets[key]?.append(session)
+        }
+        return order.map { SessionGroup(key: $0, sessions: buckets[$0] ?? []) }
+    }
+
+    private struct SessionGroup {
+        let key: String
+        let sessions: [ClaudeSession]
     }
 
     private var workingCount: Int { sessions.filter { $0.status == .working }.count }
@@ -104,6 +139,9 @@ enum SessionStatusPalette {
 
 private struct SessionRow: View {
     let session: ClaudeSession
+    var onDismiss: (() -> Void)? = nil
+
+    @State private var isHovered = false
 
     private var statusColor: Color { SessionStatusPalette.color(for: session.status) }
 
@@ -125,10 +163,27 @@ private struct SessionRow: View {
 
             Spacer()
 
-            Text(session.cwdDisplayName ?? String(session.sessionId.prefix(8)))
-                .font(.system(size: 9).monospaced())
-                .foregroundStyle(BrandPalette.muted.opacity(0.5))
-                .lineLimit(1)
+            if session.cwdDisplayName == nil {
+                Text(String(session.sessionId.prefix(8)))
+                    .font(.system(size: 9).monospaced())
+                    .foregroundStyle(BrandPalette.muted.opacity(0.5))
+                    .lineLimit(1)
+            }
+
+            if let onDismiss {
+                Button(action: onDismiss) {
+                    Image(systemName: "xmark")
+                        .font(.system(size: 9, weight: .bold))
+                        .foregroundStyle(Color.white.opacity(0.85))
+                        .frame(width: 18, height: 18)
+                        .background(Circle().fill(Color.black.opacity(0.35)))
+                        .overlay(Circle().stroke(Color.white.opacity(0.15), lineWidth: 0.5))
+                }
+                .buttonStyle(.plain)
+                .help("Remove session from list")
+                .opacity(isHovered ? 1 : 0)
+                .animation(.easeInOut(duration: 0.12), value: isHovered)
+            }
         }
         .padding(.horizontal, 10)
         .padding(.vertical, 8)
@@ -140,6 +195,8 @@ private struct SessionRow: View {
             RoundedRectangle(cornerRadius: 8, style: .continuous)
                 .stroke(rowBorder, lineWidth: 1)
         )
+        .contentShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+        .onHover { isHovered = $0 }
     }
 
     @ViewBuilder private var statusDot: some View {

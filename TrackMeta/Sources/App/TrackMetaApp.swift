@@ -16,6 +16,9 @@ struct TrackMetaApp: App {
 @Observable
 final class PopoverPresenter {
     var isOpen: Bool = false
+    /// When true, click-away and app-deactivation do not dismiss the panel.
+    /// Explicit dismissals (status item, hotkey, pin toggle) still close it.
+    var isPinned: Bool = false
 }
 
 @MainActor
@@ -42,9 +45,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// effectively at rest — used to sequence `orderOut` on close.
     private static let morphSettleSeconds: Double = 0.42
 
-    private var pillPanel: NotchPillPanel?
-    private var pillHosting: NSHostingController<NotchPillContainer>?
-    private var pillSizeObservation: NSKeyValueObservation?
+    /// One pill panel per display (keyed by `CGDirectDisplayID`) so the
+    /// notch UI shows on every connected screen simultaneously.
+    private var pillPanels: [CGDirectDisplayID: NotchPillPanel] = [:]
+    private var pillHostings: [CGDirectDisplayID: NSHostingController<NotchPillContainer>] = [:]
+    private var pillSizeObservations: [CGDirectDisplayID: NSKeyValueObservation] = [:]
     private var screenParamsObserver: NSObjectProtocol?
     private var globalHotkey: GlobalHotkey?
 
@@ -123,8 +128,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // expanding popup, then fade it out once the popup has covered it.
         pendingPillHideTask = Task { @MainActor [weak self] in
             try? await Task.sleep(nanoseconds: 160_000_000)
-            guard !Task.isCancelled else { return }
-            self?.pillPanel?.orderOut(nil)
+            guard !Task.isCancelled, let self else { return }
+            // Only hide the pill on the screen the popover is on — leave other
+            // displays' pills visible so the menu bar indicator doesn't vanish
+            // everywhere when the popup opens on one screen.
+            if let popoverScreen = self.panel?.screen,
+               let displayID = Self.displayID(for: popoverScreen) {
+                self.pillPanels[displayID]?.orderOut(nil)
+            }
         }
     }
 
@@ -132,6 +143,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         removeMouseMonitors()
         lastDismissAt = Date()
         pendingPillHideTask?.cancel(); pendingPillHideTask = nil
+        presenter.isPinned = false
 
         guard let panel, panel.isVisible else {
             updatePillPresentation()
@@ -221,8 +233,21 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         return panel
     }
 
+    /// Screen the popover should target. When the status item's button is
+    /// hidden (because we've replaced it with a notch pill) its window may not
+    /// report a meaningful screen, so fall back to the display containing the
+    /// mouse cursor — that matches which pill the user just clicked / hovered.
     private func currentScreen() -> NSScreen? {
-        statusItem?.button?.window?.screen ?? NSScreen.main
+        let mouse = NSEvent.mouseLocation
+        if let under = NSScreen.screens.first(where: { $0.frame.contains(mouse) }) {
+            return under
+        }
+        return statusItem?.button?.window?.screen ?? NSScreen.main
+    }
+
+    private static func displayID(for screen: NSScreen) -> CGDirectDisplayID? {
+        (screen.deviceDescription[NSDeviceDescriptionKey("NSScreenNumber")] as? NSNumber)
+            .map { CGDirectDisplayID($0.uint32Value) }
     }
 
     /// True if the given screen is the built-in (laptop) display.
@@ -233,16 +258,35 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         return CGDisplayIsBuiltin(CGDirectDisplayID(number.uint32Value)) != 0
     }
 
-    /// Returns the notch's frame in screen coordinates, or nil on non-notched / external displays.
+    /// Width of the synthetic notch rendered on external (non-built-in) displays
+    /// so the pill + notch-attached popover behaves the same as on a notched MacBook.
+    private static let virtualNotchWidth: CGFloat = 200
+
+    /// Returns the notch's frame in screen coordinates.
+    ///
+    /// - Built-in displays with a physical notch: returns the real notch rect.
+    /// - Built-in displays without a notch (older MacBooks, external-only iMac-style):
+    ///   returns nil, preserving the classic menu-bar status item.
+    /// - External displays: synthesizes a centered virtual notch spanning the menu bar
+    ///   so the same under-the-notch UI can attach there.
     private static func notchFrame(on screen: NSScreen?) -> NSRect? {
-        guard let screen, isBuiltInDisplay(screen), screen.safeAreaInsets.top > 0 else { return nil }
-        let left = screen.auxiliaryTopLeftArea ?? .zero
-        let right = screen.auxiliaryTopRightArea ?? .zero
-        guard left.width > 0, right.width > 0 else { return nil }
-        let minX = left.maxX
-        let maxX = right.minX
-        let y = screen.frame.maxY - screen.safeAreaInsets.top
-        return NSRect(x: minX, y: y, width: maxX - minX, height: screen.safeAreaInsets.top)
+        guard let screen else { return nil }
+        if isBuiltInDisplay(screen) {
+            guard screen.safeAreaInsets.top > 0 else { return nil }
+            let left = screen.auxiliaryTopLeftArea ?? .zero
+            let right = screen.auxiliaryTopRightArea ?? .zero
+            guard left.width > 0, right.width > 0 else { return nil }
+            let minX = left.maxX
+            let maxX = right.minX
+            let y = screen.frame.maxY - screen.safeAreaInsets.top
+            return NSRect(x: minX, y: y, width: maxX - minX, height: screen.safeAreaInsets.top)
+        }
+        let menuBarHeight = screen.frame.maxY - screen.visibleFrame.maxY
+        guard menuBarHeight > 0 else { return nil }
+        let width = virtualNotchWidth
+        let x = screen.frame.midX - width / 2
+        let y = screen.frame.maxY - menuBarHeight
+        return NSRect(x: x, y: y, width: width, height: menuBarHeight)
     }
 
     private func repositionPanel(_ panel: NSPanel) {
@@ -267,13 +311,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         globalMouseMonitor = NSEvent.addGlobalMonitorForEvents(
             matching: [.leftMouseDown, .rightMouseDown, .otherMouseDown]
         ) { [weak self] _ in
-            Task { @MainActor in self?.dismissPanel() }
+            Task { @MainActor in
+                guard let self, !self.presenter.isPinned else { return }
+                self.dismissPanel()
+            }
         }
         localMouseMonitor = NSEvent.addLocalMonitorForEvents(
             matching: [.leftMouseDown, .rightMouseDown, .otherMouseDown]
         ) { [weak self] event in
             guard let self else { return event }
-            if event.window !== self.panel && event.window !== self.pillPanel {
+            if self.presenter.isPinned { return event }
+            let isPillWindow = self.pillPanels.values.contains(where: { $0 === event.window })
+            if event.window !== self.panel && !isPillWindow {
                 self.dismissPanel()
             }
             return event
@@ -287,20 +336,38 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     // MARK: - Notch pill
 
-    /// Shows the collapsed pill on notched built-in displays and hides the
-    /// menu-bar status item there; falls back to the menu bar item on any
-    /// other display configuration.
+    /// Shows one collapsed pill per connected display that has a real or
+    /// synthetic notch. The menu-bar status item is hidden whenever at least
+    /// one pill is shown, so the indicator never appears in two places.
+    /// Displays without a notch (older built-in) keep the classic status item.
     private func updatePillPresentation() {
-        guard let screen = currentScreen(), let notch = Self.notchFrame(on: screen) else {
+        let targets: [(screen: NSScreen, notch: NSRect, id: CGDirectDisplayID)] =
+            NSScreen.screens.compactMap { screen in
+                guard let notch = Self.notchFrame(on: screen),
+                      let id = Self.displayID(for: screen) else { return nil }
+                return (screen, notch, id)
+            }
+
+        let activeIDs = Set(targets.map(\.id))
+        for (id, panel) in pillPanels where !activeIDs.contains(id) {
+            panel.orderOut(nil)
+            pillPanels.removeValue(forKey: id)
+            pillHostings.removeValue(forKey: id)
+            pillSizeObservations[id]?.invalidate()
+            pillSizeObservations.removeValue(forKey: id)
+        }
+
+        if targets.isEmpty {
             statusItem?.button?.isHidden = false
-            pillPanel?.orderOut(nil)
             return
         }
         statusItem?.button?.isHidden = true
-        showPill(notch: notch, on: screen)
+        for target in targets {
+            showPill(notch: target.notch, on: target.screen, id: target.id)
+        }
     }
 
-    private func showPill(notch: NSRect, on screen: NSScreen) {
+    private func showPill(notch: NSRect, on screen: NSScreen, id: CGDirectDisplayID) {
         let container = NotchPillContainer(
             model: model,
             notchWidth: notch.width,
@@ -313,16 +380,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         )
 
         let host: NSHostingController<NotchPillContainer>
-        if let existing = pillHosting {
+        if let existing = pillHostings[id] {
             existing.rootView = container
             host = existing
         } else {
             host = NSHostingController(rootView: container)
-            pillHosting = host
+            pillHostings[id] = host
         }
         host.sizingOptions = .preferredContentSize
 
-        let panel = pillPanel ?? NotchPillPanel(
+        let panel = pillPanels[id] ?? NotchPillPanel(
             contentRect: NSRect(x: 0, y: 0, width: notch.width, height: 14),
             styleMask: [.nonactivatingPanel, .borderless, .fullSizeContentView],
             backing: .buffered,
@@ -334,23 +401,35 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         panel.isOpaque = false
         panel.hasShadow = model.sessionsPinned
         panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .stationary]
+        panel.centerX = notch.midX
+        panel.topY = notch.minY + 2
         panel.contentViewController = host
-        pillPanel = panel
+        pillPanels[id] = panel
 
         host.view.wantsLayer = true
         host.view.layer?.masksToBounds = false
 
-        pillSizeObservation?.invalidate()
-        pillSizeObservation = host.observe(\.preferredContentSize, options: [.new, .initial]) { [weak self] _, _ in
-            Task { @MainActor [weak self] in self?.repositionPill(notch: notch) }
+        pillSizeObservations[id]?.invalidate()
+        pillSizeObservations[id] = host.observe(\.preferredContentSize, options: [.new, .initial]) { [weak self] _, _ in
+            Task { @MainActor [weak self] in
+                // SwiftUI already springs `preferredContentSize` across the
+                // collapse/expand transition — snap the window every frame
+                // instead of layering AppKit's own setFrame animation, which
+                // competes with SwiftUI's spring and makes the pill's top edge
+                // jitter during the height change.
+                self?.repositionPill(notch: notch, id: id, animate: false)
+            }
         }
 
-        repositionPill(notch: notch)
+        repositionPill(notch: notch, id: id)
         panel.orderFrontRegardless()
     }
 
-    private func repositionPill(notch: NSRect) {
-        guard let panel = pillPanel, let host = pillHosting else { return }
+    private func repositionPill(notch: NSRect, id: CGDirectDisplayID, animate: Bool = true) {
+        guard let panel = pillPanels[id], let host = pillHostings[id] else { return }
+        // Force a layout pass so `fittingSize` reflects the current SwiftUI
+        // content instead of a stale pre-transition size.
+        host.view.layoutSubtreeIfNeeded()
         let fitting = host.view.fittingSize
         let width = max(fitting.width, notch.width)
         let height = max(fitting.height, 14)
@@ -363,14 +442,73 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             height: height
         )
         // Animate so the pill ↔ pinned-sessions size change glides instead of snapping.
-        let shouldAnimate = panel.isVisible && panel.frame != target
+        let shouldAnimate = animate && panel.isVisible && panel.frame != target
         panel.setFrame(target, display: true, animate: shouldAnimate)
     }
 }
 
 final class NotchPillPanel: NSPanel {
+    /// Horizontal center the panel should always align to — matches `notch.midX`
+    /// for the display this panel lives on. Set by `showPill` before the panel
+    /// is made visible.
+    var centerX: CGFloat?
+    /// Screen-space Y the panel's top edge should always align to — matches
+    /// `notch.minY + 2` for the display this panel lives on.
+    var topY: CGFloat?
+
     override var canBecomeKey: Bool { false }
     override var canBecomeMain: Bool { false }
+
+    // Any resize path — our `repositionPill`, `sizingOptions = .preferredContentSize`
+    // auto-resize, or AppKit internal — must leave the panel centered on
+    // `centerX` and anchored at `topY`. AppKit's default `setContentSize`/
+    // `setFrame` preserves the window's bottom-left origin, which lets the
+    // panel's top edge drop/rise as SwiftUI content grows/shrinks — the pill
+    // (which renders at the top of the VStack) then appears to jump.
+    override func setFrame(_ frameRect: NSRect, display flag: Bool) {
+        super.setFrame(reanchored(frameRect), display: flag)
+    }
+
+    override func setFrame(_ frameRect: NSRect, display flag: Bool, animate animateFlag: Bool) {
+        super.setFrame(reanchored(frameRect), display: flag, animate: animateFlag)
+    }
+
+    override func setFrameOrigin(_ point: NSPoint) {
+        super.setFrameOrigin(reanchoredOrigin(for: frame.size))
+    }
+
+    override func setContentSize(_ size: NSSize) {
+        // AppKit's default `setContentSize` preserves the bottom-left origin,
+        // which shifts the top edge when height changes. Route the resize
+        // through our reanchored setFrame so the top stays pinned.
+        let contentDelta = NSSize(
+            width: frame.width - contentRect(forFrameRect: frame).width,
+            height: frame.height - contentRect(forFrameRect: frame).height
+        )
+        let newSize = NSSize(
+            width: size.width + contentDelta.width,
+            height: size.height + contentDelta.height
+        )
+        let rect = NSRect(origin: frame.origin, size: newSize)
+        super.setFrame(reanchored(rect), display: true)
+    }
+
+    private func reanchored(_ rect: NSRect) -> NSRect {
+        var r = rect
+        r.origin = reanchoredOrigin(for: r.size)
+        return r
+    }
+
+    private func reanchoredOrigin(for size: NSSize) -> NSPoint {
+        var origin = frame.origin
+        if let centerX {
+            origin.x = (centerX - size.width / 2).rounded()
+        }
+        if let topY {
+            origin.y = (topY - size.height).rounded()
+        }
+        return origin
+    }
 }
 
 struct NotchPillContainer: View {
@@ -379,96 +517,107 @@ struct NotchPillContainer: View {
     let onTap: () -> Void
     let onUnpin: () -> Void
 
+    // Fixed container width so toggling between collapsed/expanded sessions
+    // doesn't change the panel's preferred size (prevents AppKit left-jumps).
+    private let containerWidth: CGFloat = 360
+
     var body: some View {
-        ZStack(alignment: .top) {
+        VStack(spacing: 0) {
+            NotchPillView(snapshot: model.snapshot, action: onTap)
+                .frame(width: notchWidth, height: 14)
+
+            sessionsLayer
+                .padding(.top, 2)
+        }
+        .frame(width: containerWidth)
+    }
+
+    /// The conditional sessions UI lives in its own animation scope so the
+    /// pill above is never a descendant of a springing `.animation` modifier.
+    @ViewBuilder
+    private var sessionsLayer: some View {
+        Group {
             if model.sessionsPinned {
-                PinnedNotchSessionsView(
-                    snapshot: model.snapshot,
-                    sessions: model.sessions,
-                    notchWidth: notchWidth,
-                    onTap: onTap,
-                    onUnpin: onUnpin
-                )
-                .transition(pinnedTransition)
-            } else {
-                NotchPillView(snapshot: model.snapshot, action: onTap)
-                    .frame(width: notchWidth, height: 14)
-                    .transition(pillTransition)
+                if model.sessionsPinnedCollapsed {
+                    SessionDotsCapsule(
+                        sessions: model.sessions,
+                        onExpand: { model.sessionsPinnedCollapsed = false }
+                    )
+                    .transition(sessionsTransition)
+                } else {
+                    PinnedSessionsDrawer(
+                        sessions: model.sessions,
+                        onCollapse: { model.sessionsPinnedCollapsed = true },
+                        onUnpin: onUnpin
+                    )
+                    .transition(sessionsTransition)
+                }
             }
         }
         .animation(
             .spring(response: 0.5, dampingFraction: 0.84),
             value: model.sessionsPinned
         )
+        .animation(
+            .spring(response: 0.45, dampingFraction: 0.86),
+            value: model.sessionsPinnedCollapsed
+        )
     }
 
-    private var pinnedTransition: AnyTransition {
+    private var sessionsTransition: AnyTransition {
         .asymmetric(
-            insertion: .scale(scale: 0.82, anchor: .top)
+            insertion: .scale(scale: 0.85, anchor: .top)
                 .combined(with: .opacity),
             removal: .scale(scale: 0.9, anchor: .top)
                 .combined(with: .opacity)
         )
     }
+}
 
-    private var pillTransition: AnyTransition {
-        .asymmetric(
-            insertion: .scale(scale: 0.88, anchor: .top)
-                .combined(with: .opacity),
-            removal: .opacity
-        )
+private struct SessionDotsCapsule: View {
+    let sessions: [ClaudeSession]
+    let onExpand: () -> Void
+
+    private let dotSize: CGFloat = 6
+    private let dotSpacing: CGFloat = 4
+
+    var body: some View {
+        Button(action: onExpand) {
+            HStack(spacing: dotSpacing) {
+                if sessions.isEmpty {
+                    Circle()
+                        .stroke(Color.white.opacity(0.35), lineWidth: 1)
+                        .frame(width: dotSize, height: dotSize)
+                } else {
+                    ForEach(sessions) { session in
+                        Circle()
+                            .fill(SessionStatusPalette.color(for: session.status))
+                            .frame(width: dotSize, height: dotSize)
+                    }
+                }
+            }
+            .padding(.horizontal, 6)
+            .padding(.vertical, 3)
+            .background(
+                Capsule().fill(Color.black.opacity(0.85))
+            )
+            .overlay(
+                Capsule().stroke(Color.white.opacity(0.08), lineWidth: 0.5)
+            )
+            .contentShape(Capsule())
+        }
+        .buttonStyle(.plain)
+        .help("Expand sessions")
     }
 }
 
-private struct PinnedNotchSessionsView: View {
-    let snapshot: UsageSnapshot
+private struct PinnedSessionsDrawer: View {
     let sessions: [ClaudeSession]
-    let notchWidth: CGFloat
-    let onTap: () -> Void
+    let onCollapse: () -> Void
     let onUnpin: () -> Void
-
-    @State private var now: Date = Date()
-    private let ticker = Timer.publish(every: 30, on: .main, in: .common).autoconnect()
-
-    private let containerWidth: CGFloat = 360
-    private let neckHeight: CGFloat = 20
-
-    private var bucket: UsageBucket { snapshot.fiveHour }
-    private var barColor: Color { usageColor(for: bucket.percent) }
-    private var stripeProgress: Double? {
-        bucket.sessionProgress(at: now, windowLength: SessionWindow.fiveHourSeconds)
-    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
-            Color.clear.frame(height: neckHeight)
-
-            Button(action: onTap) {
-                HStack(spacing: 8) {
-                    PinnedMiniBar(percent: bucket.percent, color: barColor, stripeProgress: stripeProgress)
-                        .frame(height: 6)
-                    Text("\(Int(bucket.percent.rounded()))%")
-                        .font(.system(size: 10, weight: .semibold))
-                        .monospacedDigit()
-                        .foregroundStyle(.white)
-                }
-                .padding(.horizontal, 14)
-                .padding(.bottom, 8)
-            }
-            .buttonStyle(.plain)
-
-            LinearGradient(
-                colors: [
-                    Color.white.opacity(0),
-                    Color.white.opacity(0.08),
-                    Color.white.opacity(0)
-                ],
-                startPoint: .leading,
-                endPoint: .trailing
-            )
-            .frame(height: 1)
-            .padding(.horizontal, 12)
-
             HStack(spacing: 6) {
                 Text("Sessions")
                     .font(.system(size: 10, weight: .semibold))
@@ -484,6 +633,15 @@ private struct PinnedNotchSessionsView: View {
                     .background(
                         Capsule().fill(Color.white.opacity(0.08))
                     )
+                Button(action: onCollapse) {
+                    Image(systemName: "chevron.up")
+                        .font(.system(size: 9, weight: .semibold))
+                        .foregroundStyle(.white.opacity(0.7))
+                        .padding(4)
+                        .background(Circle().fill(Color.white.opacity(0.1)))
+                }
+                .buttonStyle(.plain)
+                .help("Collapse sessions")
                 Spacer()
                 Button(action: onUnpin) {
                     Image(systemName: "pin.slash.fill")
@@ -515,7 +673,7 @@ private struct PinnedNotchSessionsView: View {
                 .padding(.bottom, 10)
             }
         }
-        .frame(width: containerWidth)
+        .frame(maxWidth: .infinity)
         .background(
             LinearGradient(
                 colors: [BrandPalette.panelTop, BrandPalette.panelBottom],
@@ -523,45 +681,13 @@ private struct PinnedNotchSessionsView: View {
                 endPoint: .bottom
             )
         )
-        .clipShape(
-            NotchIslandShape(
-                notchWidth: max(1, notchWidth),
-                neckHeight: neckHeight,
-                bottomRadius: 22
-            )
+        .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+        .overlay(
+            RoundedRectangle(cornerRadius: 16, style: .continuous)
+                .stroke(Color.white.opacity(0.08), lineWidth: 0.5)
         )
-        .onReceive(ticker) { now = $0 }
-    }
-}
-
-private struct PinnedMiniBar: View {
-    let percent: Double
-    let color: Color
-    var stripeProgress: Double? = nil
-
-    var body: some View {
-        GeometryReader { geo in
-            ZStack(alignment: .leading) {
-                Capsule().fill(Color.white.opacity(0.12))
-                Capsule()
-                    .fill(color)
-                    .frame(
-                        width: max(
-                            geo.size.height,
-                            geo.size.width * CGFloat(max(0, min(100, percent)) / 100)
-                        )
-                    )
-                if let stripeProgress {
-                    let stripeWidth: CGFloat = 1.5
-                    let x = geo.size.width * CGFloat(min(1, max(0, stripeProgress)))
-                    let clampedX = min(max(stripeWidth / 2, x), geo.size.width - stripeWidth / 2)
-                    Rectangle()
-                        .fill(Color.white.opacity(0.95))
-                        .frame(width: stripeWidth, height: geo.size.height + 2)
-                        .offset(x: clampedX - stripeWidth / 2, y: 0)
-                }
-            }
-        }
+        .shadow(color: .black.opacity(0.35), radius: 12, x: 0, y: 6)
+        .padding(.horizontal, 4)
     }
 }
 

@@ -6,7 +6,7 @@ struct UsagePopover: View {
     static let preferredWidth: CGFloat = 560
 
     @Bindable var model: UsageViewModel
-    var presenter: PopoverPresenter
+    @Bindable var presenter: PopoverPresenter
     var notchAttached: Bool = false
     var notchWidth: CGFloat = 0
     var onTogglePinSessions: (() -> Void)? = nil
@@ -97,6 +97,21 @@ struct UsagePopover: View {
                     .foregroundStyle(BrandPalette.muted)
             }
             Spacer()
+            Button {
+                presenter.isPinned.toggle()
+            } label: {
+                Image(systemName: presenter.isPinned ? "pin.fill" : "pin")
+                    .font(.system(size: 12, weight: .semibold))
+                    .foregroundStyle(presenter.isPinned ? BrandPalette.accent : BrandPalette.muted)
+                    .rotationEffect(.degrees(presenter.isPinned ? 0 : 45))
+                    .padding(6)
+                    .background(
+                        Circle().fill(Color.white.opacity(presenter.isPinned ? 0.12 : 0.06))
+                    )
+            }
+            .buttonStyle(.plain)
+            .help(presenter.isPinned ? "Unpin (allow click-away to close)" : "Pin (keep open when clicking away)")
+
             Button(action: model.refresh) {
                 Image(systemName: "arrow.clockwise")
                     .font(.system(size: 12, weight: .semibold))
@@ -142,7 +157,8 @@ struct UsagePopover: View {
             SessionsSection(
                 sessions: model.sessions,
                 isPinned: model.sessionsPinned,
-                onTogglePin: onTogglePinSessions
+                onTogglePin: onTogglePinSessions,
+                onDismissSession: { model.dismissSession($0) }
             )
         }
     }

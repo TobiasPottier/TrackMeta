@@ -6,10 +6,15 @@ final class UsageViewModel {
     private(set) var state: UsageLoadState = .idle
     private(set) var history: [UsageSample] = []
     private(set) var sessions: [ClaudeSession] = []
+    private var dismissedSessionIds: Set<String> = []
     var sessionsPinned: Bool {
         didSet { UserDefaults.standard.set(sessionsPinned, forKey: Self.pinnedKey) }
     }
+    var sessionsPinnedCollapsed: Bool {
+        didSet { UserDefaults.standard.set(sessionsPinnedCollapsed, forKey: Self.pinnedCollapsedKey) }
+    }
     private static let pinnedKey = "TrackMeta.sessionsPinned"
+    private static let pinnedCollapsedKey = "TrackMeta.sessionsPinnedCollapsed"
     private let client: ClaudeUsageClient
     private let sessionClient = ClaudeSessionClient()
     private let store: UsageHistoryStore
@@ -23,6 +28,7 @@ final class UsageViewModel {
         self.store = store
         self.history = store.load(asOf: Date())
         self.sessionsPinned = UserDefaults.standard.bool(forKey: Self.pinnedKey)
+        self.sessionsPinnedCollapsed = UserDefaults.standard.bool(forKey: Self.pinnedCollapsedKey)
         startAutoRefresh()
         startSessionPolling()
     }
@@ -59,7 +65,17 @@ final class UsageViewModel {
         } catch {
             fetched = []
         }
-        sessions = fetched
+        let fetchedIds = Set(fetched.map(\.sessionId))
+        dismissedSessionIds = dismissedSessionIds.intersection(fetchedIds)
+        sessions = fetched.filter { !dismissedSessionIds.contains($0.sessionId) }
+    }
+
+    func dismissSession(_ sessionId: String) {
+        dismissedSessionIds.insert(sessionId)
+        sessions = sessions.filter { $0.sessionId != sessionId }
+        Task { [sessionClient] in
+            try? await sessionClient.deleteSession(sessionId)
+        }
     }
 
     private func startAutoRefresh() {
