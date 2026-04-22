@@ -2,216 +2,55 @@ import SwiftUI
 import Combine
 import Charts
 
-struct UsagePopover: View {
-    static let preferredWidth: CGFloat = 560
+struct UsageCapBanner: View {
+    let snapshot: UsageSnapshot
 
-    @Bindable var model: UsageViewModel
-    @Bindable var presenter: PopoverPresenter
-    var notchAttached: Bool = false
-    var notchWidth: CGFloat = 0
-    var onTogglePinSessions: (() -> Void)? = nil
-
-    // Vertical distance over which the top narrows from full width down to the notch width.
-    private let neckHeight: CGFloat = 20
-
-    private var isOpen: Bool { presenter.isOpen }
-
-    private var panelShape: AnyShape {
-        if notchAttached, notchWidth > 0 {
-            return AnyShape(NotchIslandShape(
-                notchWidth: notchWidth,
-                neckHeight: neckHeight,
-                bottomRadius: 22
-            ))
-        }
-        return AnyShape(UnevenRoundedRectangle(
-            topLeadingRadius: 14,
-            bottomLeadingRadius: 18,
-            bottomTrailingRadius: 18,
-            topTrailingRadius: 14,
-            style: .continuous
-        ))
+    private var resetText: String? {
+        [snapshot.fiveHour.resetsAt, snapshot.sevenDay.resetsAt]
+            .compactMap { $0 }
+            .min()
+            .map { "Next reset \(Self.resetFormatter.string(from: $0))" }
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 0) {
-            header
-                .padding(.horizontal, 22)
-                .padding(.top, notchAttached ? neckHeight + 14 : 18)
-                .padding(.bottom, 14)
-
-            Divider().background(BrandPalette.border)
-
-            content
-                .padding(.horizontal, 22)
-                .padding(.vertical, 16)
-
-            Divider().background(BrandPalette.border)
-
-            footer
-                .padding(.horizontal, 22)
-                .padding(.vertical, 10)
-        }
-        .frame(width: Self.preferredWidth)
-        .background(
-            LinearGradient(
-                colors: [BrandPalette.panelTop, BrandPalette.panelBottom],
-                startPoint: .top,
-                endPoint: .bottom
-            )
-        )
-        .foregroundStyle(.white)
-        .clipShape(panelShape)
-        .scaleEffect(
-            x: isOpen ? 1.0 : collapsedScaleX,
-            y: isOpen ? 1.0 : collapsedScaleY,
-            anchor: .top
-        )
-        .blur(radius: isOpen ? 0 : 14)
-        .opacity(isOpen ? 1.0 : 0.0)
-    }
-
-    /// Starting horizontal scale: the shape begins right at the notch's width
-    /// so its top edge lines up with the visible pill.
-    private var collapsedScaleX: CGFloat {
-        guard notchAttached, notchWidth > 0 else { return 0.94 }
-        let ratio = notchWidth / Self.preferredWidth
-        return max(0.34, min(0.55, ratio + 0.02))
-    }
-
-    /// Starting vertical scale: collapsed flat against the notch so the panel
-    /// feels like it's unfurling from the pill rather than appearing out of nowhere.
-    private var collapsedScaleY: CGFloat {
-        notchAttached ? 0.12 : 0.9
-    }
-
-    private var header: some View {
-        HStack(spacing: 10) {
-            TrackerLogo(size: 26)
-            VStack(alignment: .leading, spacing: 1) {
-                Text("TrackMeta")
-                    .font(.system(size: 14, weight: .semibold))
-                    .tracking(-0.2)
-                Text("Claude Max usage")
-                    .font(.system(size: 11))
-                    .foregroundStyle(BrandPalette.muted)
-            }
-            Spacer()
-            Button {
-                presenter.isPinned.toggle()
-            } label: {
-                Image(systemName: presenter.isPinned ? "pin.fill" : "pin")
-                    .font(.system(size: 12, weight: .semibold))
-                    .foregroundStyle(presenter.isPinned ? BrandPalette.accent : BrandPalette.muted)
-                    .rotationEffect(.degrees(presenter.isPinned ? 0 : 45))
-                    .padding(6)
-                    .background(
-                        Circle().fill(Color.white.opacity(presenter.isPinned ? 0.12 : 0.06))
-                    )
-            }
-            .buttonStyle(.plain)
-            .help(presenter.isPinned ? "Unpin (allow click-away to close)" : "Pin (keep open when clicking away)")
-
-            Button(action: model.refresh) {
-                Image(systemName: "arrow.clockwise")
-                    .font(.system(size: 12, weight: .semibold))
-                    .foregroundStyle(BrandPalette.muted)
-                    .padding(6)
-                    .background(
-                        Circle().fill(Color.white.opacity(0.06))
-                    )
-            }
-            .buttonStyle(.plain)
-            .help("Refresh")
-        }
-    }
-
-    @ViewBuilder private var content: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            PeakHoursIndicator()
-
-            switch model.state {
-            case .idle, .loading:
-                HStack(spacing: 10) {
-                    ProgressView().controlSize(.small)
-                    Text("Loading usage…")
-                        .font(.system(size: 12))
-                        .foregroundStyle(BrandPalette.muted)
-                }
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .padding(.vertical, 8)
-
-            case .failed(let message):
-                failure(message)
-
-            case .loaded(let snap):
-                UsageRow(title: "5-hour session", bucket: snap.fiveHour, sessionWindow: SessionWindow.fiveHourSeconds)
-                SessionUsageChart(history: model.history, bucket: snap.fiveHour)
-                UsageRow(title: "Weekly",         bucket: snap.sevenDay, sessionWindow: SessionWindow.sevenDaySeconds)
-            }
-
-            Divider()
-                .background(BrandPalette.border)
-                .padding(.vertical, 2)
-
-            SessionsSection(
-                sessions: model.sessions,
-                isPinned: model.sessionsPinned,
-                onTogglePin: onTogglePinSessions,
-                onDismissSession: { model.dismissSession($0) }
-            )
-        }
-    }
-
-    private func failure(_ message: String) -> some View {
         HStack(alignment: .top, spacing: 10) {
-            Image(systemName: "exclamationmark.triangle.fill")
-                .foregroundStyle(.orange)
-            VStack(alignment: .leading, spacing: 4) {
-                Text("Couldn't load usage")
+            Image(systemName: "gauge.high")
+                .font(.system(size: 13, weight: .semibold))
+                .foregroundStyle(.red)
+                .frame(width: 16)
+
+            VStack(alignment: .leading, spacing: 3) {
+                Text("Usage cap reached")
                     .font(.system(size: 12, weight: .semibold))
-                Text(message)
-                    .font(.system(size: 11))
-                    .foregroundStyle(BrandPalette.muted)
-                    .fixedSize(horizontal: false, vertical: true)
+                if let resetText {
+                    Text(resetText)
+                        .font(.system(size: 10))
+                        .foregroundStyle(BrandPalette.muted)
+                        .monospacedDigit()
+                }
             }
+
+            Spacer(minLength: 0)
         }
         .padding(10)
         .background(
-            RoundedRectangle(cornerRadius: 8, style: .continuous)
-                .fill(Color.orange.opacity(0.08))
+            RoundedRectangle(cornerRadius: 10, style: .continuous)
+                .fill(Color.red.opacity(0.10))
         )
         .overlay(
-            RoundedRectangle(cornerRadius: 8, style: .continuous)
-                .stroke(Color.orange.opacity(0.25), lineWidth: 1)
+            RoundedRectangle(cornerRadius: 10, style: .continuous)
+                .stroke(Color.red.opacity(0.32), lineWidth: 1)
         )
     }
 
-    private var footer: some View {
-        HStack {
-            SettingsLink {
-                Label("Settings", systemImage: "gearshape")
-                    .font(.system(size: 11, weight: .medium))
-                    .foregroundStyle(BrandPalette.muted)
-            }
-            .buttonStyle(.plain)
-
-            Spacer()
-
-            Button {
-                NSApp.terminate(nil)
-            } label: {
-                Text("Quit")
-                    .font(.system(size: 11, weight: .medium))
-                    .foregroundStyle(BrandPalette.muted)
-            }
-            .buttonStyle(.plain)
-            .keyboardShortcut("q")
-        }
-    }
+    private static let resetFormatter: DateFormatter = {
+        let f = DateFormatter()
+        f.dateFormat = "EEE HH:mm"
+        return f
+    }()
 }
 
-private struct UsageRow: View {
+struct UsageRow: View {
     let title: String
     let bucket: UsageBucket
     let sessionWindow: TimeInterval?
@@ -283,7 +122,7 @@ func usageColor(for percent: Double) -> Color {
     }
 }
 
-private struct PeakHoursIndicator: View {
+struct PeakHoursIndicator: View {
     private let window = PeakHoursWindow.claudeDefault
 
     @State private var now: Date = Date()
@@ -407,7 +246,7 @@ private struct UsageBar: View {
     }
 }
 
-private struct SessionUsageChart: View {
+struct SessionUsageChart: View {
     let history: [UsageSample]
     let bucket: UsageBucket
 
@@ -541,62 +380,3 @@ private struct SessionUsageChart: View {
     }
 }
 
-/// Shape that sits flush against the notch: the top edge is exactly `notchWidth`
-/// and fans outward over `neckHeight` to the full width, ending in rounded bottom corners.
-struct NotchIslandShape: Shape {
-    var notchWidth: CGFloat
-    var neckHeight: CGFloat
-    var bottomRadius: CGFloat
-
-    func path(in rect: CGRect) -> Path {
-        var p = Path()
-        let W = rect.width
-        let H = rect.height
-        let r = min(bottomRadius, min(W, H) / 2)
-        let nh = min(neckHeight, H - r)
-        let inset = max(0, (W - notchWidth) / 2)
-
-        // Tangent-handle lengths. Both endpoints of the neck curve carry a
-        // *vertical* tangent so the curve flows continuously into the notch
-        // side at the top and into the panel side at the bottom — no corner.
-        let topHandle    = nh * 0.62
-        let bottomHandle = nh * 0.42
-
-        // Top-left corner of the notch
-        p.move(to: CGPoint(x: inset, y: 0))
-
-        // Neck: notch edge → full-width left side. Vertical tangents at both ends.
-        p.addCurve(
-            to: CGPoint(x: 0, y: nh),
-            control1: CGPoint(x: inset, y: topHandle),
-            control2: CGPoint(x: 0, y: nh - bottomHandle)
-        )
-
-        // Left edge down to bottom-left corner
-        p.addLine(to: CGPoint(x: 0, y: H - r))
-        p.addQuadCurve(
-            to: CGPoint(x: r, y: H),
-            control: CGPoint(x: 0, y: H)
-        )
-
-        // Bottom edge
-        p.addLine(to: CGPoint(x: W - r, y: H))
-        p.addQuadCurve(
-            to: CGPoint(x: W, y: H - r),
-            control: CGPoint(x: W, y: H)
-        )
-
-        // Right edge up to the neck
-        p.addLine(to: CGPoint(x: W, y: nh))
-
-        // Mirror neck: full-width right side → notch edge.
-        p.addCurve(
-            to: CGPoint(x: W - inset, y: 0),
-            control1: CGPoint(x: W, y: nh - bottomHandle),
-            control2: CGPoint(x: W - inset, y: topHandle)
-        )
-
-        p.closeSubpath()
-        return p
-    }
-}

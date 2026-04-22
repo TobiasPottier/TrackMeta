@@ -52,23 +52,35 @@ struct ClaudeUsageClient {
         guard let http = response as? HTTPURLResponse else { throw ClaudeUsageError.badResponse }
         switch http.statusCode {
         case 200..<300: return snapshot(from: http)
+        case 429:       return snapshot(from: http, usageCapReached: true)
         case 401, 403: throw ClaudeUsageError.unauthorized
         default:       throw ClaudeUsageError.http(http.statusCode)
         }
     }
 
-    private func snapshot(from http: HTTPURLResponse) -> UsageSnapshot {
+    private func snapshot(from http: HTTPURLResponse, usageCapReached: Bool = false) -> UsageSnapshot {
         UsageSnapshot(
             fiveHour:  bucket(utilHeader: "anthropic-ratelimit-unified-5h-utilization",
-                              resetHeader: "anthropic-ratelimit-unified-5h-reset", in: http),
+                              resetHeader: "anthropic-ratelimit-unified-5h-reset",
+                              in: http,
+                              usageCapReached: usageCapReached),
             sevenDay:  bucket(utilHeader: "anthropic-ratelimit-unified-7d-utilization",
-                              resetHeader: "anthropic-ratelimit-unified-7d-reset", in: http),
-            fetchedAt: Date()
+                              resetHeader: "anthropic-ratelimit-unified-7d-reset",
+                              in: http,
+                              usageCapReached: usageCapReached),
+            fetchedAt: Date(),
+            isUsageCapReached: usageCapReached
         )
     }
 
-    private func bucket(utilHeader: String, resetHeader: String, in http: HTTPURLResponse) -> UsageBucket {
-        let util = (http.value(forHTTPHeaderField: utilHeader).flatMap(Double.init)) ?? 0
+    private func bucket(
+        utilHeader: String,
+        resetHeader: String,
+        in http: HTTPURLResponse,
+        usageCapReached: Bool
+    ) -> UsageBucket {
+        let rawUtil = (http.value(forHTTPHeaderField: utilHeader).flatMap(Double.init)) ?? 0
+        let util = usageCapReached ? max(1, rawUtil) : rawUtil
         let pct = max(0, min(100, Int((util * 100).rounded())))
         let resetTs = http.value(forHTTPHeaderField: resetHeader).flatMap(Double.init) ?? 0
         let resetsAt = resetTs > 0 ? Date(timeIntervalSince1970: resetTs) : nil

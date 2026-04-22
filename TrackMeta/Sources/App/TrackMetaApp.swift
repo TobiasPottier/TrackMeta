@@ -13,37 +13,10 @@ struct TrackMetaApp: App {
 }
 
 @MainActor
-@Observable
-final class PopoverPresenter {
-    var isOpen: Bool = false
-    /// When true, click-away and app-deactivation do not dismiss the panel.
-    /// Explicit dismissals (status item, hotkey, pin toggle) still close it.
-    var isPinned: Bool = false
-}
-
-@MainActor
 final class AppDelegate: NSObject, NSApplicationDelegate {
     let model = UsageViewModel()
-    private let presenter = PopoverPresenter()
 
     private var statusItem: NSStatusItem?
-    private var panel: UsagePanel?
-    private var hostingController: NSHostingController<UsagePopover>?
-    private var sizeObservation: NSKeyValueObservation?
-    private var globalMouseMonitor: Any?
-    private var localMouseMonitor: Any?
-    private var lastDismissAt: Date = .distantPast
-    private var pendingDismissTask: Task<Void, Never>?
-    private var pendingPillHideTask: Task<Void, Never>?
-    private var dyingPanel: UsagePanel?
-
-    /// Spring used for both the open and close morph — keep in sync with
-    /// `UsagePopover`'s clip shape timing so the panel feels like it's
-    /// physically attached to the pill.
-    private static let morphAnimation: Animation = .spring(response: 0.46, dampingFraction: 0.84)
-    /// Duration (seconds) the morph spring needs before the panel is
-    /// effectively at rest — used to sequence `orderOut` on close.
-    private static let morphSettleSeconds: Double = 0.42
 
     /// One pill panel per display (keyed by `CGDirectDisplayID`) so the
     /// notch UI shows on every connected screen simultaneously.
@@ -52,6 +25,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var pillSizeObservations: [CGDirectDisplayID: NSKeyValueObservation] = [:]
     private var screenParamsObserver: NSObjectProtocol?
     private var globalHotkey: GlobalHotkey?
+
+    private var dashboardWindow: NSWindow?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         let item = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
@@ -66,12 +41,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 host.bottomAnchor.constraint(equalTo: button.bottomAnchor),
             ])
             button.target = self
-            button.action = #selector(togglePanel(_:))
+            button.action = #selector(toggleDashboard(_:))
         }
         statusItem = item
 
         globalHotkey = GlobalHotkey { [weak self] in
-            self?.togglePanel(nil)
+            self?.toggleDashboard(nil)
         }
 
         updatePillPresentation()
@@ -84,165 +59,75 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
     }
 
-    private func toggleSessionsPinned() {
-        model.sessionsPinned.toggle()
-        dismissPanel()
-    }
-
-    @objc private func togglePanel(_ sender: Any?) {
-        if let panel, panel.isVisible {
-            dismissPanel()
+    @objc private func toggleDashboard(_ sender: Any?) {
+        if let window = dashboardWindow, window.isVisible {
+            window.close()
             return
         }
-        if Date().timeIntervalSince(lastDismissAt) < 0.15 { return }
-        showPanel()
+        openDashboard()
     }
 
-    private func showPanel() {
-        // Cancel any in-flight close so a rapid reopen doesn't get yanked away.
-        pendingDismissTask?.cancel(); pendingDismissTask = nil
-        pendingPillHideTask?.cancel(); pendingPillHideTask = nil
-        // Tear down any panel that's still shrinking from a previous close.
-        dyingPanel?.orderOut(nil); dyingPanel = nil
+    private func openDashboard() {
+        // LSUIElement apps can't bring regular windows forward without
+        // temporarily becoming a regular (Dock-visible) app.
+        NSApp.setActivationPolicy(.regular)
 
-        // Rebuild each time so notch state follows the current display.
-        panel?.orderOut(nil)
-        presenter.isOpen = false
-        let panel = makePanel()
-        self.panel = panel
-        repositionPanel(panel)
-        panel.makeKeyAndOrderFront(nil)
-        NSApp.activate(ignoringOtherApps: true)
-        installMouseMonitors()
-
-        // Animate the morph on the next runloop tick so SwiftUI has rendered
-        // the collapsed (pill-sized) state first and then springs up to full.
-        DispatchQueue.main.async { [weak self] in
-            guard let self else { return }
-            withAnimation(Self.morphAnimation) {
-                self.presenter.isOpen = true
-            }
-        }
-
-        // Keep the pill visible briefly so it appears to morph into the
-        // expanding popup, then fade it out once the popup has covered it.
-        pendingPillHideTask = Task { @MainActor [weak self] in
-            try? await Task.sleep(nanoseconds: 160_000_000)
-            guard !Task.isCancelled, let self else { return }
-            // Only hide the pill on the screen the popover is on — leave other
-            // displays' pills visible so the menu bar indicator doesn't vanish
-            // everywhere when the popup opens on one screen.
-            if let popoverScreen = self.panel?.screen,
-               let displayID = Self.displayID(for: popoverScreen) {
-                self.pillPanels[displayID]?.orderOut(nil)
-            }
-        }
-    }
-
-    private func dismissPanel() {
-        removeMouseMonitors()
-        lastDismissAt = Date()
-        pendingPillHideTask?.cancel(); pendingPillHideTask = nil
-        presenter.isPinned = false
-
-        guard let panel, panel.isVisible else {
-            updatePillPresentation()
+        if let window = dashboardWindow {
+            window.makeKeyAndOrderFront(nil)
+            NSApp.activate(ignoringOtherApps: true)
             return
         }
 
-        // Bring the pill back on screen under the popup so the popup's shrink
-        // reveals the pill beneath it, creating a continuous morph.
-        updatePillPresentation()
-        // `updatePillPresentation` calls `orderFrontRegardless` on the pill,
-        // so re-raise the popup so it shrinks *over* the pill, not under it.
-        panel.orderFrontRegardless()
-
-        withAnimation(Self.morphAnimation) {
-            presenter.isOpen = false
-        }
-
-        // Release the panel after the morph animation settles.
-        self.dyingPanel = panel
-        self.panel = nil
-        pendingDismissTask?.cancel()
-        pendingDismissTask = Task { @MainActor [weak self] in
-            let nanos = UInt64(Self.morphSettleSeconds * 1_000_000_000)
-            try? await Task.sleep(nanoseconds: nanos)
-            guard !Task.isCancelled, let self else { return }
-            self.dyingPanel?.orderOut(nil)
-            self.dyingPanel = nil
-            self.hostingController = nil
-            self.sizeObservation?.invalidate()
-            self.sizeObservation = nil
-        }
-    }
-
-    private func makePanel() -> UsagePanel {
-        let notch = Self.notchFrame(on: currentScreen())
-        let notchWidth = notch?.width ?? 0
-        let root = UsagePopover(
+        let root = DashboardView(
             model: model,
-            presenter: presenter,
-            notchAttached: notch != nil,
-            notchWidth: notchWidth,
             onTogglePinSessions: { [weak self] in
-                Task { @MainActor in self?.toggleSessionsPinned() }
+                Task { @MainActor in self?.model.sessionsPinned.toggle() }
             }
         )
         let host = NSHostingController(rootView: root)
-        hostingController = host
+        // Don't let SwiftUI's fitting size drive the window — we want a full
+        // dashboard-sized window, not one that shrink-wraps the content.
+        host.sizingOptions = []
 
-        let fitting = host.view.fittingSize
-        let contentSize = NSSize(
-            width: max(fitting.width, UsagePopover.preferredWidth),
-            height: max(fitting.height, 1)
-        )
-
-        let panel = UsagePanel(
-            contentRect: NSRect(origin: .zero, size: contentSize),
-            styleMask: [.nonactivatingPanel, .borderless, .fullSizeContentView],
+        let initialSize = NSSize(width: 820, height: 640)
+        let window = NSWindow(
+            contentRect: NSRect(origin: .zero, size: initialSize),
+            styleMask: [.titled, .closable, .miniaturizable, .resizable],
             backing: .buffered,
             defer: false
         )
-        panel.isFloatingPanel = true
-        panel.level = .statusBar
-        panel.backgroundColor = .clear
-        panel.isOpaque = false
-        panel.hasShadow = true
-        panel.animationBehavior = .utilityWindow
-        panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
-        panel.contentViewController = host
-        panel.setContentSize(host.view.fittingSize)
+        window.title = "TrackMeta Dashboard"
+        window.isReleasedWhenClosed = false
+        window.titlebarAppearsTransparent = true
+        window.backgroundColor = NSColor(red: 0x1B/255.0, green: 0x1E/255.0, blue: 0x24/255.0, alpha: 1.0)
+        window.appearance = NSAppearance(named: .darkAqua)
+        window.contentViewController = host
+        window.setContentSize(initialSize)
+        window.minSize = NSSize(width: 560, height: 480)
+        window.center()
+        window.collectionBehavior = [.fullScreenPrimary]
+        window.delegate = dashboardWindowDelegate
 
-        host.view.wantsLayer = true
-        // Shape clipping is done in SwiftUI so we can round only the bottom corners.
-        host.view.layer?.masksToBounds = false
-
-        // Auto-resize the panel when SwiftUI content height changes (e.g. sessions load).
-        host.sizingOptions = .preferredContentSize
-        sizeObservation = host.observe(\.preferredContentSize, options: [.new]) { [weak self, weak panel] _, change in
-            guard let self, let panel, let newSize = change.newValue, newSize.height > 0 else { return }
-            Task { @MainActor [weak self, weak panel] in
-                guard let self, let panel, panel.isVisible else { return }
-                let width = max(newSize.width, UsagePopover.preferredWidth)
-                panel.setContentSize(NSSize(width: width, height: newSize.height))
-                self.repositionPanel(panel)
-            }
-        }
-
-        return panel
+        dashboardWindow = window
+        window.makeKeyAndOrderFront(nil)
+        NSApp.activate(ignoringOtherApps: true)
     }
 
-    /// Screen the popover should target. When the status item's button is
-    /// hidden (because we've replaced it with a notch pill) its window may not
-    /// report a meaningful screen, so fall back to the display containing the
-    /// mouse cursor — that matches which pill the user just clicked / hovered.
-    private func currentScreen() -> NSScreen? {
-        let mouse = NSEvent.mouseLocation
-        if let under = NSScreen.screens.first(where: { $0.frame.contains(mouse) }) {
-            return under
+    private func dashboardDidClose() {
+        dashboardWindow = nil
+        // Return to agent mode so the app has no Dock icon when only the
+        // menu-bar pill is visible.
+        NSApp.setActivationPolicy(.accessory)
+    }
+
+    private lazy var dashboardWindowDelegate: DashboardWindowDelegate = {
+        DashboardWindowDelegate { [weak self] in
+            Task { @MainActor in self?.dashboardDidClose() }
         }
-        return statusItem?.button?.window?.screen ?? NSScreen.main
+    }()
+
+    private func toggleSessionsPinned() {
+        model.sessionsPinned.toggle()
     }
 
     private static func displayID(for screen: NSScreen) -> CGDirectDisplayID? {
@@ -259,16 +144,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     /// Width of the synthetic notch rendered on external (non-built-in) displays
-    /// so the pill + notch-attached popover behaves the same as on a notched MacBook.
+    /// so the pill behaves the same as on a notched MacBook.
     private static let virtualNotchWidth: CGFloat = 200
 
     /// Returns the notch's frame in screen coordinates.
-    ///
-    /// - Built-in displays with a physical notch: returns the real notch rect.
-    /// - Built-in displays without a notch (older MacBooks, external-only iMac-style):
-    ///   returns nil, preserving the classic menu-bar status item.
-    /// - External displays: synthesizes a centered virtual notch spanning the menu bar
-    ///   so the same under-the-notch UI can attach there.
     private static func notchFrame(on screen: NSScreen?) -> NSRect? {
         guard let screen else { return nil }
         if isBuiltInDisplay(screen) {
@@ -287,51 +166,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let x = screen.frame.midX - width / 2
         let y = screen.frame.maxY - menuBarHeight
         return NSRect(x: x, y: y, width: width, height: menuBarHeight)
-    }
-
-    private func repositionPanel(_ panel: NSPanel) {
-        guard let screen = currentScreen() else { return }
-        let size = panel.frame.size
-
-        if let notch = Self.notchFrame(on: screen) {
-            // Center on the notch; top edge flush with the notch bottom.
-            let x = notch.midX - size.width / 2
-            let y = notch.minY - size.height + 2
-            panel.setFrameOrigin(NSPoint(x: x.rounded(), y: y.rounded()))
-        } else {
-            let vf = screen.visibleFrame
-            let x = vf.midX - size.width / 2
-            let y = vf.maxY - size.height - 6
-            panel.setFrameOrigin(NSPoint(x: x.rounded(), y: y.rounded()))
-        }
-    }
-
-    private func installMouseMonitors() {
-        removeMouseMonitors()
-        globalMouseMonitor = NSEvent.addGlobalMonitorForEvents(
-            matching: [.leftMouseDown, .rightMouseDown, .otherMouseDown]
-        ) { [weak self] _ in
-            Task { @MainActor in
-                guard let self, !self.presenter.isPinned else { return }
-                self.dismissPanel()
-            }
-        }
-        localMouseMonitor = NSEvent.addLocalMonitorForEvents(
-            matching: [.leftMouseDown, .rightMouseDown, .otherMouseDown]
-        ) { [weak self] event in
-            guard let self else { return event }
-            if self.presenter.isPinned { return event }
-            let isPillWindow = self.pillPanels.values.contains(where: { $0 === event.window })
-            if event.window !== self.panel && !isPillWindow {
-                self.dismissPanel()
-            }
-            return event
-        }
-    }
-
-    private func removeMouseMonitors() {
-        if let m = globalMouseMonitor { NSEvent.removeMonitor(m); globalMouseMonitor = nil }
-        if let m = localMouseMonitor { NSEvent.removeMonitor(m); localMouseMonitor = nil }
     }
 
     // MARK: - Notch pill
@@ -372,7 +206,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             model: model,
             notchWidth: notch.width,
             onTap: { [weak self] in
-                Task { @MainActor in self?.togglePanel(nil) }
+                Task { @MainActor in self?.toggleDashboard(nil) }
             },
             onUnpin: { [weak self] in
                 Task { @MainActor in self?.toggleSessionsPinned() }
@@ -412,11 +246,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         pillSizeObservations[id]?.invalidate()
         pillSizeObservations[id] = host.observe(\.preferredContentSize, options: [.new, .initial]) { [weak self] _, _ in
             Task { @MainActor [weak self] in
-                // SwiftUI already springs `preferredContentSize` across the
-                // collapse/expand transition — snap the window every frame
-                // instead of layering AppKit's own setFrame animation, which
-                // competes with SwiftUI's spring and makes the pill's top edge
-                // jitter during the height change.
                 self?.repositionPill(notch: notch, id: id, animate: false)
             }
         }
@@ -427,8 +256,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     private func repositionPill(notch: NSRect, id: CGDirectDisplayID, animate: Bool = true) {
         guard let panel = pillPanels[id], let host = pillHostings[id] else { return }
-        // Force a layout pass so `fittingSize` reflects the current SwiftUI
-        // content instead of a stale pre-transition size.
         host.view.layoutSubtreeIfNeeded()
         let fitting = host.view.fittingSize
         let width = max(fitting.width, notch.width)
@@ -441,7 +268,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             width: width,
             height: height
         )
-        // Animate so the pill ↔ pinned-sessions size change glides instead of snapping.
         let shouldAnimate = animate && panel.isVisible && panel.frame != target
         panel.setFrame(target, display: true, animate: shouldAnimate)
     }
@@ -461,10 +287,7 @@ final class NotchPillPanel: NSPanel {
 
     // Any resize path — our `repositionPill`, `sizingOptions = .preferredContentSize`
     // auto-resize, or AppKit internal — must leave the panel centered on
-    // `centerX` and anchored at `topY`. AppKit's default `setContentSize`/
-    // `setFrame` preserves the window's bottom-left origin, which lets the
-    // panel's top edge drop/rise as SwiftUI content grows/shrinks — the pill
-    // (which renders at the top of the VStack) then appears to jump.
+    // `centerX` and anchored at `topY`.
     override func setFrame(_ frameRect: NSRect, display flag: Bool) {
         super.setFrame(reanchored(frameRect), display: flag)
     }
@@ -478,9 +301,6 @@ final class NotchPillPanel: NSPanel {
     }
 
     override func setContentSize(_ size: NSSize) {
-        // AppKit's default `setContentSize` preserves the bottom-left origin,
-        // which shifts the top edge when height changes. Route the resize
-        // through our reanchored setFrame so the top stays pinned.
         let contentDelta = NSSize(
             width: frame.width - contentRect(forFrameRect: frame).width,
             height: frame.height - contentRect(forFrameRect: frame).height
@@ -831,9 +651,16 @@ private struct MiniUsageBar: View {
     }
 }
 
-final class UsagePanel: NSPanel {
-    override var canBecomeKey: Bool { true }
-    override var canBecomeMain: Bool { false }
+final class DashboardWindowDelegate: NSObject, NSWindowDelegate {
+    private let onClose: () -> Void
+
+    init(onClose: @escaping () -> Void) {
+        self.onClose = onClose
+    }
+
+    func windowWillClose(_ notification: Notification) {
+        onClose()
+    }
 }
 
 private struct MenuBarLabelContainer: View {

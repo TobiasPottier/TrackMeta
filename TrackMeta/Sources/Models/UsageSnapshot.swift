@@ -34,11 +34,13 @@ struct UsageSnapshot: Equatable {
     let fiveHour: UsageBucket
     let sevenDay: UsageBucket
     let fetchedAt: Date
+    let isUsageCapReached: Bool
 
     static let empty = UsageSnapshot(
         fiveHour: UsageBucket(used: 0, limit: 0, resetsAt: nil),
         sevenDay: UsageBucket(used: 0, limit: 0, resetsAt: nil),
-        fetchedAt: .distantPast
+        fetchedAt: .distantPast,
+        isUsageCapReached: false
     )
 }
 

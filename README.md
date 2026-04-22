@@ -34,6 +34,8 @@ The usage history chart builds up samples over the current 5h window and rolls o
 
 If requests start failing with 401, your OAuth token expired — run `claude /login` in a terminal, then hit Reload in TrackMeta.
 
+If Anthropic returns 429, TrackMeta treats it as a Claude Max usage cap rather than a load failure. The full popover stays available, usage shows as capped, and live sessions continue to render.
+
 ## Why not the public Anthropic API?
 
 Claude **Max** subscription usage isn't exposed by the public Messages / admin APIs. The only way to see it programmatically is to make a real Messages request and read the `anthropic-ratelimit-unified-5h-*` / `anthropic-ratelimit-unified-7d-*` headers. That's what TrackMeta does — one `max_tokens: 1` request per minute. The 1-second session poll is a separate call to `http://localhost:7777`, not an Anthropic API hit.

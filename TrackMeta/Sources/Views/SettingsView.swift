@@ -77,15 +77,25 @@ struct SettingsView: View {
                 .font(.system(size: 12))
                 .foregroundStyle(BrandPalette.muted)
         case .loaded(let snap):
-            Label("Last updated \(snap.fetchedAt.formatted(date: .omitted, time: .standard))",
-                  systemImage: "checkmark.circle.fill")
+            Label(statusMessage(for: snap),
+                  systemImage: snap.isUsageCapReached ? "gauge.high" : "checkmark.circle.fill")
                 .font(.system(size: 12))
-                .foregroundStyle(Color(red: 0.34, green: 0.78, blue: 0.47))
+                .foregroundStyle(snap.isUsageCapReached
+                                 ? Color(red: 0.95, green: 0.35, blue: 0.35)
+                                 : Color(red: 0.34, green: 0.78, blue: 0.47))
         case .failed(let message):
             Label(message, systemImage: "exclamationmark.triangle.fill")
                 .font(.system(size: 12))
                 .foregroundStyle(.orange)
         }
+    }
+
+    private func statusMessage(for snap: UsageSnapshot) -> String {
+        let updated = snap.fetchedAt.formatted(date: .omitted, time: .standard)
+        if snap.isUsageCapReached {
+            return "Usage cap reached · updated \(updated)"
+        }
+        return "Last updated \(updated)"
     }
 
     @ViewBuilder

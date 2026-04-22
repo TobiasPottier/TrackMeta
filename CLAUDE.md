@@ -41,6 +41,7 @@ Target: macOS 14+. App is an `LSUIElement` agent (no Dock icon). Needs outbound 
 - The Claude Code CLI (`claude`) must already be logged in on this Mac so the Keychain item `Claude Code-credentials` exists. Without it the UI shows "No Claude Code credentials found."
 - First Keychain read triggers a macOS prompt — the user must click **Always Allow** for silent subsequent reads. If they pick "Allow Once", every refresh re-prompts.
 - When the token expires, requests return 401 → user runs `claude /login` and hits Reload.
+- When Anthropic returns 429, treat it as Claude Max usage-cap reached, not a hard load error. The UI should render the normal app with capped usage and continue showing sessions.
 - The Sessions panel depends on a local sessions server reachable at `http://localhost:7777`. If it isn't running, the Sessions section stays empty but the usage readout still works.
 - ⌃⌥Space is registered as a process-wide hotkey that toggles the popover from anywhere.
 
@@ -73,6 +74,7 @@ Sources/
 Key invariants to preserve when editing:
 
 - `ClaudeUsageClient` never throws on missing headers — a missing header means 0% utilization. Don't turn that into an error.
+- `ClaudeUsageClient` treats HTTP 429 as a successful capped snapshot so the app does not get stuck behind an error message.
 - The request uses `anthropic-beta: oauth-2025-04-20` and `User-Agent: claude-code/<version>`. These are required for the OAuth token to be accepted; don't drop them when refactoring headers.
 - `UsageViewModel` runs **two** long-lived `Task`s: a 60s usage-refresh loop and a 1s session-poll loop. If you add a manual refresh path, reuse the existing `refreshOnce()` entry points rather than starting a third parallel loop. When warning about parallel loops, specify which one.
 - State flows through `UsageLoadState` (`idle | loading | loaded | failed`); views read `model.snapshot` which collapses non-loaded states to `.empty`. Keep that collapse in one place.
