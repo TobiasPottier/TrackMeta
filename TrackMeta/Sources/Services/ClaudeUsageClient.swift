@@ -31,7 +31,7 @@ struct ClaudeUsageClient {
         self.session = session
     }
 
-    func fetchSnapshot(accessToken: String) async throws -> UsageSnapshot {
+    func fetchSnapshot(accessToken: String, preservingUsageFrom priorSnapshot: UsageSnapshot? = nil) async throws -> UsageSnapshot {
         var request = URLRequest(url: url)
         request.httpMethod = "POST"
         request.timeoutInterval = 30
@@ -52,22 +52,28 @@ struct ClaudeUsageClient {
         guard let http = response as? HTTPURLResponse else { throw ClaudeUsageError.badResponse }
         switch http.statusCode {
         case 200..<300: return snapshot(from: http)
-        case 429:       return snapshot(from: http, usageCapReached: true)
+        case 429, 439:  return snapshot(from: http, usageCapReached: true, fallback: priorSnapshot)
         case 401, 403: throw ClaudeUsageError.unauthorized
         default:       throw ClaudeUsageError.http(http.statusCode)
         }
     }
 
-    private func snapshot(from http: HTTPURLResponse, usageCapReached: Bool = false) -> UsageSnapshot {
+    private func snapshot(
+        from http: HTTPURLResponse,
+        usageCapReached: Bool = false,
+        fallback: UsageSnapshot? = nil
+    ) -> UsageSnapshot {
         UsageSnapshot(
             fiveHour:  bucket(utilHeader: "anthropic-ratelimit-unified-5h-utilization",
                               resetHeader: "anthropic-ratelimit-unified-5h-reset",
                               in: http,
-                              usageCapReached: usageCapReached),
+                              usageCapReached: usageCapReached,
+                              fallback: fallback?.fiveHour),
             sevenDay:  bucket(utilHeader: "anthropic-ratelimit-unified-7d-utilization",
                               resetHeader: "anthropic-ratelimit-unified-7d-reset",
                               in: http,
-                              usageCapReached: usageCapReached),
+                              usageCapReached: usageCapReached,
+                              fallback: fallback?.sevenDay),
             fetchedAt: Date(),
             isUsageCapReached: usageCapReached
         )
@@ -77,13 +83,21 @@ struct ClaudeUsageClient {
         utilHeader: String,
         resetHeader: String,
         in http: HTTPURLResponse,
-        usageCapReached: Bool
+        usageCapReached: Bool,
+        fallback: UsageBucket?
     ) -> UsageBucket {
-        let rawUtil = (http.value(forHTTPHeaderField: utilHeader).flatMap(Double.init)) ?? 0
-        let util = usageCapReached ? max(1, rawUtil) : rawUtil
-        let pct = max(0, min(100, Int((util * 100).rounded())))
         let resetTs = http.value(forHTTPHeaderField: resetHeader).flatMap(Double.init) ?? 0
-        let resetsAt = resetTs > 0 ? Date(timeIntervalSince1970: resetTs) : nil
-        return UsageBucket(used: pct, limit: 100, resetsAt: resetsAt)
+        let resetsAt = resetTs > 0 ? Date(timeIntervalSince1970: resetTs) : fallback?.resetsAt
+
+        if let rawUtil = http.value(forHTTPHeaderField: utilHeader).flatMap(Double.init) {
+            let pct = max(0, min(100, Int((rawUtil * 100).rounded())))
+            return UsageBucket(used: pct, limit: 100, resetsAt: resetsAt)
+        }
+
+        if usageCapReached, let fallback {
+            return UsageBucket(used: fallback.used, limit: fallback.limit, resetsAt: resetsAt)
+        }
+
+        return UsageBucket(used: 0, limit: 100, resetsAt: resetsAt)
     }
 }

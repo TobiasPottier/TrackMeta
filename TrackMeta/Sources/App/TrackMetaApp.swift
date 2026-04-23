@@ -27,6 +27,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var globalHotkey: GlobalHotkey?
 
     private var dashboardWindow: NSWindow?
+    private var agentsPanelWindow: NSWindow?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         let item = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
@@ -82,6 +83,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             model: model,
             onTogglePinSessions: { [weak self] in
                 Task { @MainActor in self?.model.sessionsPinned.toggle() }
+            },
+            onToggleAgentsPanel: { [weak self] in
+                Task { @MainActor in self?.toggleAgentsPanel() }
             }
         )
         let host = NSHostingController(rootView: root)
@@ -116,9 +120,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     private func dashboardDidClose() {
         dashboardWindow = nil
-        // Return to agent mode so the app has no Dock icon when only the
-        // menu-bar pill is visible.
-        NSApp.setActivationPolicy(.accessory)
+        updateActivationPolicy()
     }
 
     private lazy var dashboardWindowDelegate: DashboardWindowDelegate = {
@@ -126,6 +128,86 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             Task { @MainActor in self?.dashboardDidClose() }
         }
     }()
+
+    // MARK: - Agents panel
+
+    private func toggleAgentsPanel() {
+        if let window = agentsPanelWindow, window.isVisible {
+            window.close()
+            return
+        }
+        openAgentsPanel()
+    }
+
+    private func openAgentsPanel() {
+        NSApp.setActivationPolicy(.regular)
+
+        if let window = agentsPanelWindow {
+            window.makeKeyAndOrderFront(nil)
+            NSApp.activate(ignoringOtherApps: true)
+            return
+        }
+
+        let root = AgentsPanelView(model: model)
+        let host = NSHostingController(rootView: root)
+        host.sizingOptions = []
+
+        let initialSize = NSSize(width: 600, height: 700)
+        let panel = NSPanel(
+            contentRect: NSRect(origin: .zero, size: initialSize),
+            styleMask: [.titled, .closable, .resizable, .nonactivatingPanel, .fullSizeContentView, .utilityWindow],
+            backing: .buffered,
+            defer: false
+        )
+        panel.title = "Agents"
+        panel.isReleasedWhenClosed = false
+        panel.isFloatingPanel = true
+        panel.level = .floating
+        panel.hidesOnDeactivate = false
+        panel.titlebarAppearsTransparent = true
+        panel.titleVisibility = .hidden
+        panel.backgroundColor = NSColor(red: 0x0B/255.0, green: 0x11/255.0, blue: 0x1E/255.0, alpha: 1.0)
+        panel.appearance = NSAppearance(named: .darkAqua)
+        panel.contentViewController = host
+        panel.setContentSize(initialSize)
+        panel.minSize = NSSize(width: 480, height: 400)
+        panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .stationary]
+        panel.delegate = agentsPanelWindowDelegate
+
+        // Position the panel at the top-right of the main screen
+        if let screen = NSScreen.main {
+            let visibleFrame = screen.visibleFrame
+            let x = visibleFrame.maxX - initialSize.width - 20
+            let y = visibleFrame.maxY - initialSize.height - 20
+            panel.setFrameOrigin(NSPoint(x: x, y: y))
+        } else {
+            panel.center()
+        }
+
+        agentsPanelWindow = panel
+        panel.makeKeyAndOrderFront(nil)
+        NSApp.activate(ignoringOtherApps: true)
+        dashboardWindow?.close()
+    }
+
+    private func agentsPanelDidClose() {
+        agentsPanelWindow = nil
+        updateActivationPolicy()
+    }
+
+    private lazy var agentsPanelWindowDelegate: AgentsPanelWindowDelegate = {
+        AgentsPanelWindowDelegate { [weak self] in
+            Task { @MainActor in self?.agentsPanelDidClose() }
+        }
+    }()
+
+    /// Returns to accessory (no Dock icon) only when both main windows are closed.
+    private func updateActivationPolicy() {
+        let anyWindowOpen = (dashboardWindow?.isVisible == true) || (agentsPanelWindow?.isVisible == true)
+        if !anyWindowOpen {
+            NSApp.setActivationPolicy(.accessory)
+        }
+    }
 
     private func toggleSessionsPinned() {
         model.sessionsPinned.toggle()
@@ -464,7 +546,7 @@ private struct PinnedSessionsDrawer: View {
             .padding(.top, 8)
             .padding(.bottom, 4)
 
-            SessionGrid(model: model, variant: .compact)
+            ProjectFoldersPanel(model: model, variant: .compact)
                 .padding(.horizontal, 10)
                 .padding(.bottom, 10)
         }
@@ -561,6 +643,18 @@ private struct MiniUsageBar: View {
 }
 
 final class DashboardWindowDelegate: NSObject, NSWindowDelegate {
+    private let onClose: () -> Void
+
+    init(onClose: @escaping () -> Void) {
+        self.onClose = onClose
+    }
+
+    func windowWillClose(_ notification: Notification) {
+        onClose()
+    }
+}
+
+final class AgentsPanelWindowDelegate: NSObject, NSWindowDelegate {
     private let onClose: () -> Void
 
     init(onClose: @escaping () -> Void) {

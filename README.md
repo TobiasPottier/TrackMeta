@@ -2,7 +2,11 @@
 
 macOS menu bar app that shows your Claude Max usage (5-hour session + 7-day) right next to the clock. It reuses the OAuth token that the Claude Code CLI already stores in the macOS Keychain, sends a cheap 1-token request to `api.anthropic.com`, and reads the rate-limit utilization out of the response headers.
 
-It also shows a live **Sessions panel** for any Claude Code sessions running locally, charts your 5h-window usage history, registers a ⌃⌥Space global hotkey that toggles a notch-attached popover from anywhere, and ships a full dashboard window with a **Launch agent** button that opens a folder picker and starts a new Claude Code session in iTerm (as a new tab or split pane in the existing window for that folder).
+It also shows a live **Projects panel** that merges saved project folders with any Claude Code sessions running locally, charts your 5h-window usage history, registers a ⌃⌥Space global hotkey that toggles a notch-attached popover from anywhere, and ships a full dashboard window with:
+
+- A **Launch agent** button on every project folder — opens a new Claude Code session in iTerm as a new tab (or split right / left / up / down) in that folder's existing window.
+- An **Orchestrate** button — type a natural-language prompt and TrackMeta asks Claude (Haiku) to plan multiple Claude Code sessions, then launches each one with the right model flag (`opus` / `sonnet` / `haiku`) and split layout.
+- An **Agents** tab with a **Float** button that detaches the Agents view into a floating always-on-top panel.
 
 ## Requirements
 
@@ -35,7 +39,7 @@ The usage history chart builds up samples over the current 5h window and rolls o
 
 If requests start failing with 401, your OAuth token expired — run `claude /login` in a terminal, then hit Reload in TrackMeta.
 
-If Anthropic returns 429, TrackMeta treats it as a Claude Max usage cap rather than a load failure. The full popover stays available, usage shows as capped, and live sessions continue to render.
+If Anthropic returns 429 or 439, TrackMeta treats it as a Claude Max usage cap rather than a load failure. The full popover stays available, the cap is called out without forcing usage to 100%, and live sessions continue to render.
 
 ## Why not the public Anthropic API?
 
@@ -52,23 +56,28 @@ TrackMeta/
     App/TrackMetaApp.swift           @main, MenuBarExtra + Settings scene; wires hotkey + popover
     Models/
       UsageSnapshot.swift            UsageBucket / UsageSnapshot / UsageLoadState / sessionProgress
-      ClaudeSession.swift            live Claude Code session model
+      ClaudeSession.swift            live Claude Code session model (status / lastTool / lastToolTarget / cwd / summary / contextPercentage)
+      OrchestratorAction.swift       {model, prompt, split} → claude CLI command builder
       PeakHours.swift
     Services/
       ClaudeCredentialsStore.swift   reads Keychain → claudeAiOauth.accessToken
-      ClaudeUsageClient.swift        POST /v1/messages; snapshot from headers
+      ClaudeUsageClient.swift        POST /v1/messages; snapshot from headers; 429/439 preserves last utilization
       ClaudeSessionClient.swift      GET http://localhost:7777; polled every 1s
+      OrchestratorClient.swift       POST /v1/messages (Haiku) with a JSON-only system prompt; returns [OrchestratorAction]
+      OrchestratorFoldersStore.swift UserDefaults-backed saved folders ("TrackMeta.orchestratorFolders")
       GlobalHotkey.swift             Carbon ⌃⌥Space → toggle popover
       UsageHistoryStore.swift        UserDefaults-backed sample buffer ("usageHistory.v1")
       SessionHistoryStore.swift      per-session events / activity buckets / first-seen time (pure ingestion)
-      ITermLauncher.swift            AppleScript launcher; per-folder window cache; tabs or split panes
+      ITermLauncher.swift            AppleScript launcher; per-folder window-id + session-uid cache; tabs / split panes; focus(cwd:) jumps to a cached tab
     ViewModels/
-      UsageViewModel.swift           @Observable; 60s usage refresh + 1s session poll; owns session histories + expansion state
+      UsageViewModel.swift           @Observable; 60s usage refresh + 1s session poll; owns session histories, expansion state, saved folders, unifiedFolderGroups
     Views/
       MenuBarLabel.swift             % indicator, session-elapsed stripe, time-until-reset
       UsagePopover.swift             notch-attached popover with Swift Charts history
-      DashboardView.swift            two-pane dashboard: navigation rail + cards; "Launch agent" button
-      SessionGrid.swift              aggregate header + tile grid (standard / compact); groups by folder
+      DashboardView.swift            dashboard window with Dashboard + Agents tabs; Agents tab has a "Float" button
+      AgentsPanelView.swift          floating NSPanel content — compact chart + ProjectFoldersPanel
+      OrchestratorSheet.swift        folder picker + natural-language prompt sheet
+      ProjectFoldersPanel.swift      unified saved-folders + live-sessions list; per-row launch / split / orchestrate actions
       SessionTile.swift              per-agent tile, collapsed and expanded layouts, ActivitySparkline
       SessionVisuals.swift           shared SessionStatusPalette + PulsingDot
       SettingsView.swift             Settings scene body; FloatingWindowConfigurator
@@ -96,5 +105,5 @@ xcodebuild ... test -only-testing:TrackMetaTests/TrackMetaTests/<methodName>
 
 - The app is an `LSUIElement` agent — no Dock icon, only the menu bar extra.
 - Sandbox stays on; entitlements granted are: `com.apple.security.network.client` (reaches `api.anthropic.com` and `localhost:7777`), `com.apple.security.automation.apple-events` plus a temporary-exception for `com.googlecode.iterm2` (the iTerm launcher), and `com.apple.security.files.user-selected.read-only` (the Launch-agent folder picker).
-- Auth state is never stored by TrackMeta — it lives in the Claude Code CLI's Keychain item. TrackMeta does persist two small UserDefaults keys for UX state: `usageHistory.v1` (rolling 5h sample buffer) and `TrackMeta.sessionsPinned` (Sessions panel pin toggle).
+- Auth state is never stored by TrackMeta — it lives in the Claude Code CLI's Keychain item. TrackMeta persists a few small UserDefaults keys for UX state: `usageHistory.v1` (rolling 5h sample buffer), `TrackMeta.sessionsPinned` + `TrackMeta.sessionsPinnedCollapsed` (notch drawer toggles), and `TrackMeta.orchestratorFolders` (saved project folders).
 - ⌃⌥Space is registered process-wide via Carbon; it toggles the popover whether or not TrackMeta is frontmost.

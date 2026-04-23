@@ -23,10 +23,13 @@ enum ITermSplit {
 /// Launches Claude Code agent sessions in iTerm. Keeps a per-folder cache of
 /// iTerm window IDs so that a second agent for the same folder opens as a new
 /// tab — or split pane — in the existing window rather than spawning a fresh
-/// one.
+/// one. Also records the `unique id` of every iTerm session we launch so
+/// `focus(cwd:)` can bring that exact tab to the front later.
 enum ITermLauncher {
     private static let cacheQueue = DispatchQueue(label: "ITermLauncher.cache")
     private static var windowIdsByFolder: [String: Int] = [:]
+    private static var sessionUidsByFolder: [String: [String]] = [:]
+    private static let sessionUidCap = 8
 
     /// Opens a shell session running `command` in `folder`.
     /// - If `split` is non-nil and a cached iTerm window still exists, the
@@ -39,46 +42,58 @@ enum ITermLauncher {
         let shellCommand = "cd \(shellQuoted(path)) && \(command)"
 
         if let cached = cachedWindowId(for: path) {
-            let didReuse: Bool
+            let outcome: LaunchOutcome
             if let split {
-                didReuse = try openSplit(inWindowId: cached, shellCommand: shellCommand, direction: split)
+                outcome = try openSplit(inWindowId: cached, shellCommand: shellCommand, direction: split)
             } else {
-                didReuse = try openTab(inWindowId: cached, shellCommand: shellCommand)
+                outcome = try openTab(inWindowId: cached, shellCommand: shellCommand)
             }
-            if didReuse { return }
+            if outcome.didReuse {
+                if let uid = outcome.sessionUid { rememberSessionUid(uid, for: path) }
+                return
+            }
             setCachedWindowId(nil, for: path)
         }
 
-        let newId = try openNewWindow(shellCommand: shellCommand)
-        setCachedWindowId(newId, for: path)
+        let fresh = try openNewWindow(shellCommand: shellCommand)
+        setCachedWindowId(fresh.windowId, for: path)
+        rememberSessionUid(fresh.sessionUid, for: path)
     }
 
     // MARK: - AppleScript paths
 
+    private struct LaunchOutcome {
+        let didReuse: Bool
+        let sessionUid: String?
+    }
+
     /// Creates a new tab in the given window and runs the command. Returns
-    /// `false` when the window no longer exists so the caller can fall back
-    /// to creating a fresh window.
-    private static func openTab(inWindowId windowId: Int, shellCommand: String) throws -> Bool {
+    /// `didReuse = false` when the window no longer exists so the caller can
+    /// fall back to creating a fresh window. On success, `sessionUid` is the
+    /// new session's iTerm `unique id`.
+    private static func openTab(inWindowId windowId: Int, shellCommand: String) throws -> LaunchOutcome {
         let source = """
         tell application "iTerm"
-            if not (exists window id \(windowId)) then return false
+            if not (exists window id \(windowId)) then return {false, ""}
             activate
+            set sid to ""
             tell window id \(windowId)
                 create tab with default profile
                 tell current session
+                    set sid to unique id
                     write text "\(appleScriptQuoted(shellCommand))"
                 end tell
             end tell
-            return true
+            return {true, sid}
         end tell
         """
-        return try runScript(source).booleanValue
+        return try decodeLaunchOutcome(runScript(source))
     }
 
     /// Splits the current session of the cached window in the requested
-    /// direction and runs the command in the new pane. Returns `false` when
-    /// the window no longer exists.
-    private static func openSplit(inWindowId windowId: Int, shellCommand: String, direction: ITermSplit) throws -> Bool {
+    /// direction and runs the command in the new pane. Returns
+    /// `didReuse = false` when the window no longer exists.
+    private static func openSplit(inWindowId windowId: Int, shellCommand: String, direction: ITermSplit) throws -> LaunchOutcome {
         let splitVerb: String
         switch direction {
         case .right, .left: splitVerb = "split vertically with default profile"
@@ -105,37 +120,65 @@ enum ITermLauncher {
 
         let source = """
         tell application "iTerm"
-            if not (exists window id \(windowId)) then return false
+            if not (exists window id \(windowId)) then return {false, ""}
             activate
+            set sid to ""
             tell window id \(windowId)
                 tell current session of current tab
                     set newSession to (\(splitVerb))
                 end tell
                 tell newSession
+                    set sid to unique id
                     write text "\(appleScriptQuoted(shellCommand))"
                 end tell
-            end tell
-        end tell\(moveBlock)
-        return true
+            end tell\(moveBlock)
+            return {true, sid}
+        end tell
         """
-        return try runScript(source).booleanValue
+        return try decodeLaunchOutcome(runScript(source))
     }
 
-    /// Creates a new full-screen iTerm window and returns its integer id.
-    private static func openNewWindow(shellCommand: String) throws -> Int {
+    /// Creates a new full-screen iTerm window. Returns the window's integer
+    /// id and the new session's iTerm `unique id`.
+    ///
+    /// When iTerm wasn't already running, `tell application "iTerm"` launches
+    /// it and iTerm auto-creates a startup window. In that case we reuse the
+    /// startup window instead of calling `create window` — otherwise we'd end
+    /// up with an empty ghost window alongside the real one.
+    private static func openNewWindow(shellCommand: String) throws -> (windowId: Int, sessionUid: String) {
         let bounds = fullScreenBounds()
+        let iTermBundleId = "com.googlecode.iterm2"
+        let wasRunning = !NSRunningApplication
+            .runningApplications(withBundleIdentifier: iTermBundleId)
+            .isEmpty
+
+        let windowExpr = wasRunning
+            ? "(create window with default profile)"
+            : "current window"
+
         let source = """
         tell application "iTerm"
             activate
-            set newWindow to (create window with default profile)
+            set newWindow to \(windowExpr)
             set bounds of newWindow to {\(bounds.left), \(bounds.top), \(bounds.right), \(bounds.bottom)}
+            set sid to ""
             tell current session of newWindow
+                set sid to unique id
                 write text "\(appleScriptQuoted(shellCommand))"
             end tell
-            return id of newWindow
+            return {id of newWindow, sid}
         end tell
         """
-        return Int(try runScript(source).int32Value)
+        let desc = try runScript(source)
+        let wid = Int(desc.atIndex(1)?.int32Value ?? 0)
+        let uid = desc.atIndex(2)?.stringValue ?? ""
+        return (wid, uid)
+    }
+
+    private static func decodeLaunchOutcome(_ desc: NSAppleEventDescriptor) -> LaunchOutcome {
+        let didReuse = desc.atIndex(1)?.booleanValue ?? false
+        let uid = desc.atIndex(2)?.stringValue ?? ""
+        return LaunchOutcome(didReuse: didReuse, sessionUid: uid.isEmpty ? nil : uid)
     }
 
     private static func runScript(_ source: String) throws -> NSAppleEventDescriptor {
@@ -166,6 +209,94 @@ enum ITermLauncher {
                 windowIdsByFolder.removeValue(forKey: path)
             }
         }
+    }
+
+    private static func rememberSessionUid(_ uid: String, for path: String) {
+        guard !uid.isEmpty else { return }
+        cacheQueue.sync {
+            var list = sessionUidsByFolder[path] ?? []
+            if let existing = list.firstIndex(of: uid) {
+                list.remove(at: existing)
+            }
+            list.append(uid)
+            if list.count > sessionUidCap {
+                list.removeFirst(list.count - sessionUidCap)
+            }
+            sessionUidsByFolder[path] = list
+        }
+    }
+
+    private static func cachedSessionUids(for path: String) -> [String] {
+        cacheQueue.sync { sessionUidsByFolder[path] ?? [] }
+    }
+
+    private static func removeSessionUids(_ uids: Set<String>, for path: String) {
+        guard !uids.isEmpty else { return }
+        cacheQueue.sync {
+            guard var list = sessionUidsByFolder[path] else { return }
+            list.removeAll { uids.contains($0) }
+            if list.isEmpty {
+                sessionUidsByFolder.removeValue(forKey: path)
+            } else {
+                sessionUidsByFolder[path] = list
+            }
+        }
+    }
+
+    // MARK: - Focus
+
+    /// Brings an iTerm tab previously launched in `cwd` to the front by
+    /// matching against cached session `unique id`s. This is the only method
+    /// that works reliably under the macOS app sandbox — every approach that
+    /// requires reading another process's cwd (lsof, proc_pidinfo) is
+    /// sandbox-restricted, and iTerm's `session.path` variable throws -1723
+    /// for sessions that haven't populated it. Returns `true` if a cached
+    /// session was found live and focused.
+    @discardableResult
+    static func focus(cwd: String) throws -> Bool {
+        let uids = cachedSessionUids(for: cwd)
+        guard !uids.isEmpty else {
+            _ = try? runScript(#"tell application "iTerm" to activate"#)
+            return false
+        }
+
+        let uidListLiteral = uids
+            .map { "\"\(appleScriptQuoted($0))\"" }
+            .joined(separator: ", ")
+
+        let source = """
+        tell application "iTerm"
+            activate
+            set targetUids to {\(uidListLiteral)}
+            set foundUid to ""
+            repeat with w in windows
+                repeat with t in tabs of w
+                    repeat with s in sessions of t
+                        set uid to unique id of s
+                        if uid is in targetUids then
+                            set current tab of w to t
+                            select s
+                            set foundUid to uid
+                            exit repeat
+                        end if
+                    end repeat
+                    if foundUid is not "" then exit repeat
+                end repeat
+                if foundUid is not "" then exit repeat
+            end repeat
+            return foundUid
+        end tell
+        """
+        let desc = try runScript(source)
+        let foundUid = desc.stringValue ?? ""
+
+        if foundUid.isEmpty {
+            // None of our cached sessions are live anymore — purge so the
+            // cache doesn't grow with zombie UIDs.
+            removeSessionUids(Set(uids), for: cwd)
+            return false
+        }
+        return true
     }
 
     // MARK: - Helpers

@@ -32,15 +32,6 @@ struct UsageCapBanner: View {
 
             Spacer(minLength: 0)
         }
-        .padding(10)
-        .background(
-            RoundedRectangle(cornerRadius: 10, style: .continuous)
-                .fill(Color.red.opacity(0.10))
-        )
-        .overlay(
-            RoundedRectangle(cornerRadius: 10, style: .continuous)
-                .stroke(Color.red.opacity(0.32), lineWidth: 1)
-        )
     }
 
     private static let resetFormatter: DateFormatter = {
@@ -54,6 +45,9 @@ struct UsageRow: View {
     let title: String
     let bucket: UsageBucket
     let sessionWindow: TimeInterval?
+    var resetPlacement: ResetPlacement = .bottom
+
+    enum ResetPlacement { case bottom, topCentered }
 
     @State private var now: Date = Date()
     private let ticker = Timer.publish(every: 30, on: .main, in: .common).autoconnect()
@@ -63,38 +57,43 @@ struct UsageRow: View {
         return bucket.sessionProgress(at: now, windowLength: sessionWindow)
     }
 
+    private var resetText: String? {
+        guard let reset = bucket.resetsAt else { return nil }
+        return "Resets \(Self.resetFormatter.string(from: reset)) · \(Self.timeLeft(until: reset)) left"
+    }
+
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
-            HStack(alignment: .firstTextBaseline) {
-                Text(title)
-                    .font(.system(size: 12, weight: .medium))
-                Spacer()
-                Text("\(Int(bucket.percent.rounded()))%")
-                    .font(.system(size: 12, weight: .semibold))
-                    .monospacedDigit()
-                    .foregroundStyle(color(for: bucket.percent))
+            ZStack {
+                if resetPlacement == .topCentered, let text = resetText {
+                    Text(text)
+                        .font(.system(size: 10))
+                        .foregroundStyle(BrandPalette.muted)
+                        .monospacedDigit()
+                }
+
+                HStack(alignment: .firstTextBaseline) {
+                    Text(title)
+                        .font(.system(size: 12, weight: .medium))
+                    Spacer()
+                    Text("\(Int(bucket.percent.rounded()))%")
+                        .font(.system(size: 12, weight: .semibold))
+                        .monospacedDigit()
+                        .foregroundStyle(color(for: bucket.percent))
+                }
             }
 
             UsageBar(percent: bucket.percent, color: color(for: bucket.percent), stripeProgress: stripeProgress)
                 .frame(height: 6)
                 .onReceive(ticker) { now = $0 }
 
-            if let reset = bucket.resetsAt {
-                Text("Resets \(Self.resetFormatter.string(from: reset)) · \(Self.timeLeft(until: reset)) left")
+            if resetPlacement == .bottom, let text = resetText {
+                Text(text)
                     .font(.system(size: 10))
                     .foregroundStyle(BrandPalette.muted)
                     .monospacedDigit()
             }
         }
-        .padding(10)
-        .background(
-            RoundedRectangle(cornerRadius: 10, style: .continuous)
-                .fill(Color.white.opacity(0.04))
-        )
-        .overlay(
-            RoundedRectangle(cornerRadius: 10, style: .continuous)
-                .stroke(BrandPalette.border, lineWidth: 1)
-        )
     }
 
     private static let resetFormatter: DateFormatter = {
@@ -166,20 +165,6 @@ struct PeakHoursIndicator: View {
 
             Spacer(minLength: 0)
         }
-        .padding(10)
-        .background(
-            RoundedRectangle(cornerRadius: 10, style: .continuous)
-                .fill(status.isPeakNow
-                      ? Color.orange.opacity(0.10)
-                      : Color.white.opacity(0.04))
-        )
-        .overlay(
-            RoundedRectangle(cornerRadius: 10, style: .continuous)
-                .stroke(status.isPeakNow
-                        ? Color.orange.opacity(0.35)
-                        : BrandPalette.border,
-                        lineWidth: 1)
-        )
         .onReceive(ticker) { now = $0 }
     }
 
@@ -264,6 +249,18 @@ struct SessionUsageChart: View {
         bucket.resetsAt ?? now
     }
 
+    private var hourTicks: [Date] {
+        let cal = Calendar.current
+        let comps = cal.dateComponents([.year, .month, .day, .hour], from: sessionStart)
+        guard var tick = cal.date(from: comps) else { return [] }
+        var ticks: [Date] = []
+        while tick <= sessionEnd {
+            if tick >= sessionStart { ticks.append(tick) }
+            tick = tick.addingTimeInterval(3600)
+        }
+        return ticks
+    }
+
     private var chartColor: Color { usageColor(for: bucket.percent) }
 
     private static let boundaryFormatter: DateFormatter = {
@@ -336,6 +333,12 @@ struct SessionUsageChart: View {
                     sessionBoundaryLabel(title: "End", date: sessionEnd)
                 }
 
+                ForEach(hourTicks, id: \.self) { tick in
+                    RuleMark(x: .value("Hour", tick))
+                        .foregroundStyle(Color.white.opacity(0.12))
+                        .lineStyle(StrokeStyle(lineWidth: 0.5, dash: [2, 4]))
+                }
+
                 RuleMark(x: .value("Now", min(max(now, sessionStart), sessionEnd)))
                     .foregroundStyle(Color.white.opacity(0.55))
                     .lineStyle(StrokeStyle(lineWidth: 1))
@@ -364,7 +367,13 @@ struct SessionUsageChart: View {
             .chartXScale(domain: sessionStart...sessionEnd)
             .chartYScale(domain: 0...100)
             .chartYAxis(.hidden)
-            .chartXAxis(.hidden)
+            .chartXAxis {
+                AxisMarks(preset: .aligned, values: hourTicks) { _ in
+                    AxisValueLabel(format: .dateTime.hour(.defaultDigits(amPM: .omitted)).minute(), collisionResolution: .disabled)
+                        .font(.system(size: 9, weight: .medium).monospacedDigit())
+                        .foregroundStyle(Color.white.opacity(0.40))
+                }
+            }
             .frame(height: 180)
             .onReceive(ticker) { now = $0 }
         }

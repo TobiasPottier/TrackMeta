@@ -12,8 +12,11 @@ struct SessionTile: View {
     var variant: Variant = .standard
     var onToggleExpand: (() -> Void)? = nil
     var onDismiss: (() -> Void)? = nil
+    var onFocus: (() -> Void)? = nil
 
     @State private var now: Date = Date()
+    @State private var displayedAction: String = ""
+    @State private var actionVersion: Int = 0
     private let ticker = Timer.publish(every: 1, on: .main, in: .common).autoconnect()
 
     enum Variant {
@@ -50,6 +53,13 @@ struct SessionTile: View {
         .onTapGesture {
             onToggleExpand?()
         }
+        .onAppear { displayedAction = currentAction }
+        .onChange(of: currentAction) { _, newValue in
+            withAnimation(.easeOut(duration: 0.28)) {
+                displayedAction = newValue
+                actionVersion += 1
+            }
+        }
         .onReceive(ticker) { now = $0 }
         .animation(.easeInOut(duration: 0.18), value: isExpanded)
     }
@@ -64,11 +74,21 @@ struct SessionTile: View {
                 .foregroundStyle(.white)
                 .lineLimit(1)
                 .truncationMode(.tail)
+                .layoutPriority(1)
             Spacer(minLength: 4)
             Text(elapsedLabel)
                 .font(.system(size: 10, weight: .medium).monospacedDigit())
                 .foregroundStyle(BrandPalette.muted)
             actionIcon
+            if let onFocus, session.cwd != nil {
+                Button(action: onFocus) {
+                    Image(systemName: "eye")
+                        .font(.system(size: 10, weight: .semibold))
+                        .foregroundStyle(BrandPalette.muted)
+                        .frame(width: 14)
+                }
+                .buttonStyle(.plain)
+            }
             if isExpanded, onToggleExpand != nil {
                 Image(systemName: "chevron.up")
                     .font(.system(size: 9, weight: .semibold))
@@ -77,8 +97,30 @@ struct SessionTile: View {
         }
     }
 
+    private var rollingActionLabel: some View {
+        HStack(spacing: 3) {
+            Text("·")
+                .font(.system(size: 9))
+                .foregroundStyle(BrandPalette.muted.opacity(0.4))
+            ZStack {
+                actionText(displayedAction)
+                    .font(.system(size: 10))
+                    .foregroundStyle(BrandPalette.muted)
+                    .lineLimit(1)
+                    .truncationMode(.tail)
+                    .id(actionVersion)
+                    .transition(.asymmetric(
+                        insertion: .push(from: .bottom),
+                        removal: .push(from: .top)
+                    ))
+            }
+            .frame(maxWidth: 120, alignment: .leading)
+            .clipped()
+        }
+    }
+
     private var eventLine: some View {
-        Text(eventLineText)
+        eventLineContent
             .font(.system(size: 10))
             .foregroundStyle(BrandPalette.muted)
             .lineLimit(1)
@@ -86,11 +128,101 @@ struct SessionTile: View {
             .frame(maxWidth: .infinity, alignment: .leading)
     }
 
+    private var eventLineContent: Text {
+        if let tool = session.lastTool, !tool.isEmpty { return actionText(tool) }
+        if let name = session.cwdDisplayName { return Text(name) }
+        return Text("—")
+    }
+
+    private func actionText(_ raw: String) -> Text {
+        let parsed = Self.parseAction(raw)
+        let action = parsed.action.isEmpty ? raw : parsed.action
+        if let target = session.lastToolTarget,
+           !target.isEmpty,
+           Self.fileTools.contains(action) {
+            let file = URL(fileURLWithPath: target).lastPathComponent
+            if !file.isEmpty {
+                return Text(action) + Text(" ") + Text(file).bold().foregroundColor(.white)
+            }
+        }
+        if let file = parsed.fileName {
+            return Text(parsed.action) + Text(" ") + Text(file).bold().foregroundColor(.white)
+        }
+        return Text(action)
+    }
+
+    private static let fileTools: Set<String> = [
+        "Read", "Write", "Edit", "MultiEdit", "NotebookEdit", "NotebookRead",
+        "Glob", "Grep", "LS", "Open"
+    ]
+
+    private struct ParsedAction {
+        let action: String
+        let fileName: String?
+    }
+
+    private static func parseAction(_ raw: String) -> ParsedAction {
+        let trimmed = raw.trimmingCharacters(in: .whitespaces)
+        guard let open = trimmed.firstIndex(of: "("),
+              let close = trimmed.lastIndex(of: ")"),
+              open < close else {
+            return ParsedAction(action: trimmed, fileName: nil)
+        }
+        let name = String(trimmed[trimmed.startIndex..<open])
+            .trimmingCharacters(in: .whitespaces)
+        guard fileTools.contains(name) else {
+            return ParsedAction(action: trimmed, fileName: nil)
+        }
+        let inside = String(trimmed[trimmed.index(after: open)..<close])
+        guard let path = extractPath(from: inside) else {
+            return ParsedAction(action: name, fileName: nil)
+        }
+        let fileName = URL(fileURLWithPath: path).lastPathComponent
+        return ParsedAction(action: name, fileName: fileName.isEmpty ? nil : fileName)
+    }
+
+    private static func extractPath(from inside: String) -> String? {
+        let stripped = inside.trimmingCharacters(in: .whitespaces)
+        let candidate: String
+        if let eq = stripped.firstIndex(of: "=") {
+            candidate = String(stripped[stripped.index(after: eq)...])
+        } else {
+            candidate = stripped
+        }
+        let unquoted = candidate
+            .trimmingCharacters(in: .whitespaces)
+            .trimmingCharacters(in: CharacterSet(charactersIn: "\"'"))
+        let first = unquoted.split(whereSeparator: { $0 == "," || $0 == " " }).first.map(String.init) ?? unquoted
+        let value = first.trimmingCharacters(in: CharacterSet(charactersIn: "\"'"))
+        guard !value.isEmpty else { return nil }
+        if value.contains("/") || value.contains(".") { return value }
+        return nil
+    }
+
     private var activityRow: some View {
         HStack(spacing: 6) {
             ActivitySparkline(buckets: history?.activityBuckets ?? [], color: statusColor)
                 .frame(height: 10)
+            Spacer(minLength: 0)
+            if let pct = session.contextPercentage {
+                contextBadge(pct)
+            }
             statusTag
+        }
+    }
+
+    private func contextBadge(_ pct: Double) -> some View {
+        let clamped = min(max(pct, 0), 100)
+        let color: Color = clamped >= 90 ? .red
+                         : clamped >= 70 ? .orange
+                         : BrandPalette.muted
+        return HStack(spacing: 3) {
+            Image(systemName: "doc.text")
+                .font(.system(size: 8))
+                .foregroundStyle(color)
+            Text("\(Int(clamped))%")
+                .font(.system(size: 9, weight: .semibold).monospacedDigit())
+                .foregroundStyle(color)
         }
     }
 
@@ -195,15 +327,14 @@ struct SessionTile: View {
 
     // MARK: - Derived
 
-    private var titleText: String {
-        if let name = session.cwdDisplayName { return name }
-        return String(session.sessionId.prefix(8))
+    private var currentAction: String {
+        session.lastTool ?? ""
     }
 
-    private var eventLineText: String {
+    private var titleText: String {
         if let summary = session.summary, !summary.isEmpty { return summary }
-        if let tool = session.lastTool, !tool.isEmpty { return tool }
-        return "—"
+        if let name = session.cwdDisplayName { return name }
+        return String(session.sessionId.prefix(8))
     }
 
     private var elapsedLabel: String {

@@ -4,9 +4,12 @@ struct ClaudeSession: Identifiable, Decodable, Equatable {
     let sessionId: String
     let status: Status
     let lastTool: String?
+    let lastToolTarget: String?
     let cwd: String?
     let summary: String?
     let idleForSeconds: Int
+    /// 0–100 context window utilisation reported by the sessions server, if available.
+    let contextPercentage: Double?
 
     var id: String { sessionId }
 
@@ -31,12 +34,14 @@ struct ClaudeSession: Identifiable, Decodable, Equatable {
     }
 
     enum CodingKeys: String, CodingKey {
-        case sessionId      = "session_id"
+        case sessionId         = "session_id"
         case status
-        case lastTool       = "last_tool"
+        case lastTool          = "last_tool"
+        case lastToolTarget    = "last_tool_target"
         case cwd
         case summary
-        case idleForSeconds = "idle_for_seconds"
+        case idleForSeconds    = "idle_for_seconds"
+        case contextPercentage = "context_percentage"
     }
 }
 

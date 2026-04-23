@@ -7,9 +7,17 @@ import AppKit
 struct DashboardView: View {
     @Bindable var model: UsageViewModel
     var onTogglePinSessions: (() -> Void)? = nil
+    var onToggleAgentsPanel: (() -> Void)? = nil
 
     @State private var selectedNav: NavItem = .dashboard
     @State private var launchError: String?
+
+    // Orchestrator sheet state
+    @State private var orchestratorFolder: URL?
+    @State private var isOrchestrating = false
+    @State private var orchestratorError: String?
+
+    private let orchestratorClient = OrchestratorClient()
 
     var body: some View {
         HStack(spacing: 0) {
@@ -43,17 +51,58 @@ struct DashboardView: View {
         } message: { message in
             Text(message)
         }
+        .alert("Orchestration failed",
+               isPresented: Binding(
+                get: { orchestratorError != nil },
+                set: { if !$0 { orchestratorError = nil } }
+               ),
+               presenting: orchestratorError) { _ in
+            Button("OK", role: .cancel) { orchestratorError = nil }
+        } message: { message in
+            Text(message)
+        }
+        .sheet(isPresented: Binding(
+            get: { orchestratorFolder != nil },
+            set: { if !$0 { orchestratorFolder = nil } }
+        )) {
+            if let folder = orchestratorFolder {
+                orchestratorSheetContent(folder: folder)
+            }
+        }
+    }
+
+    @ViewBuilder private func orchestratorSheetContent(folder: URL) -> some View {
+        if isOrchestrating {
+            VStack(spacing: 16) {
+                ProgressView()
+                    .controlSize(.large)
+                Text("Asking Claude to plan your sessions…")
+                    .font(.system(size: 13))
+                    .foregroundStyle(BrandPalette.muted)
+            }
+            .frame(width: 520, height: 160)
+            .background(BrandPalette.cardFill)
+        } else {
+            OrchestratorSheet(
+                initialFolder: folder,
+                onSubmit: { resolvedFolder, prompt in
+                    orchestratorFolder = nil
+                    Task { await runOrchestration(folder: resolvedFolder, prompt: prompt) }
+                },
+                onCancel: { orchestratorFolder = nil }
+            )
+        }
     }
 
     @ViewBuilder private var mainContent: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 20) {
-                header
-                peakCard
-                fiveHourCard
-                chartCard
-                weeklyCard
-                sessionsCard
+                switch selectedNav {
+                case .agents:
+                    agentsContent
+                default:
+                    dashboardContent
+                }
             }
             .padding(.horizontal, 32)
             .padding(.vertical, 28)
@@ -61,26 +110,44 @@ struct DashboardView: View {
         }
     }
 
+    @ViewBuilder private var dashboardContent: some View {
+        header(title: "Dashboard", subtitle: "Overview of your sessions and agents", showOrchestrate: false)
+        peakCard
+        fiveHourCard
+        chartCard
+        weeklyCard
+        projectsFoldersCard
+    }
+
+    @ViewBuilder private var agentsContent: some View {
+        header(title: "Agents", subtitle: "Live agents with current 5-hour usage", showOrchestrate: true)
+        compactFiveHourCard
+        compactChartCard
+        projectsFoldersCard
+    }
+
     // MARK: - Header
 
-    private var header: some View {
+    private func header(title: String, subtitle: String, showOrchestrate: Bool = false) -> some View {
         HStack(alignment: .top) {
             VStack(alignment: .leading, spacing: 4) {
-                Text("Dashboard")
+                Text(title)
                     .font(.system(size: 26, weight: .semibold))
                     .tracking(-0.4)
-                Text("Overview of your sessions and agents")
+                Text(subtitle)
                     .font(.system(size: 12))
                     .foregroundStyle(BrandPalette.muted)
             }
             Spacer()
             HStack(spacing: 10) {
-                PrimaryCapsuleButton(
-                    title: "Launch agent",
-                    systemImage: "plus.rectangle.on.rectangle",
-                    action: launchAgent
-                )
-                .help("Open a new iTerm window running csp in a chosen folder")
+                if showOrchestrate, let onToggleAgentsPanel {
+                    SecondaryCapsuleButton(
+                        title: "Float",
+                        systemImage: "macwindow.on.rectangle",
+                        action: onToggleAgentsPanel
+                    )
+                    .help("Open agents as a floating overlay window that stays on top")
+                }
 
                 SecondaryCapsuleButton(
                     title: "Refresh",
@@ -96,8 +163,6 @@ struct DashboardView: View {
     @ViewBuilder private var peakCard: some View {
         DashCard {
             PeakHoursIndicator()
-                .padding(.horizontal, -10)
-                .padding(.vertical, -10)
         }
     }
 
@@ -112,15 +177,12 @@ struct DashboardView: View {
                 VStack(alignment: .leading, spacing: 12) {
                     if snap.isUsageCapReached {
                         UsageCapBanner(snapshot: snap)
-                            .padding(.horizontal, -4)
                     }
                     UsageRow(
                         title: "5-hour session",
                         bucket: snap.fiveHour,
                         sessionWindow: SessionWindow.fiveHourSeconds
                     )
-                    .padding(.horizontal, -10)
-                    .padding(.vertical, -10)
                 }
             }
         }
@@ -144,6 +206,36 @@ struct DashboardView: View {
         }
     }
 
+    @ViewBuilder private var compactFiveHourCard: some View {
+        DashCard(padding: 12) {
+            switch model.state {
+            case .idle, .loading:
+                LoadingRow()
+            case .failed(let message):
+                FailureRow(message: message)
+            case .loaded(let snap):
+                VStack(alignment: .leading, spacing: 8) {
+                    if snap.isUsageCapReached {
+                        UsageCapBanner(snapshot: snap)
+                    }
+                    UsageRow(
+                        title: "5-hour session",
+                        bucket: snap.fiveHour,
+                        sessionWindow: SessionWindow.fiveHourSeconds,
+                        resetPlacement: .topCentered
+                    )
+                }
+            }
+        }
+    }
+
+    @ViewBuilder private var compactChartCard: some View {
+        if case .loaded(let snap) = model.state {
+            SessionUsageChart(history: model.history, bucket: snap.fiveHour)
+                .frame(maxWidth: .infinity)
+        }
+    }
+
     @ViewBuilder private var weeklyCard: some View {
         DashCard {
             switch model.state {
@@ -157,42 +249,44 @@ struct DashboardView: View {
                     bucket: snap.sevenDay,
                     sessionWindow: SessionWindow.sevenDaySeconds
                 )
-                .padding(.horizontal, -10)
-                .padding(.vertical, -10)
             }
         }
     }
 
-    @ViewBuilder private var sessionsCard: some View {
+    @ViewBuilder private var projectsFoldersCard: some View {
         DashCard {
-            SessionGrid(
+            ProjectFoldersPanel(
                 model: model,
                 variant: .standard,
                 isPinned: model.sessionsPinned,
                 onTogglePin: onTogglePinSessions,
-                onLaunchAgent: launch(folder:split:)
+                onOrchestrate: { folder in orchestratorFolder = folder },
+                onLaunchAgent: { folder, split in launchAgent(folder: folder, split: split) }
             )
         }
     }
 
     // MARK: - Actions
 
-    private func launchAgent() {
-        let panel = NSOpenPanel()
-        panel.title = "Choose project folder"
-        panel.prompt = "Launch agent here"
-        panel.canChooseFiles = false
-        panel.canChooseDirectories = true
-        panel.allowsMultipleSelection = false
-        guard panel.runModal() == .OK, let folder = panel.url else { return }
-        launch(folder: folder)
-    }
-
-    private func launch(folder: URL, split: ITermSplit? = nil) {
+    private func launchAgent(folder: URL, split: ITermSplit?) {
         do {
             try ITermLauncher.launch(folder: folder, command: "csp", split: split)
         } catch {
             launchError = (error as? LocalizedError)?.errorDescription
+                ?? error.localizedDescription
+        }
+    }
+
+    private func runOrchestration(folder: URL, prompt: String) async {
+        isOrchestrating = true
+        defer { isOrchestrating = false }
+        do {
+            let actions = try await orchestratorClient.orchestrate(userPrompt: prompt, folder: folder)
+            for action in actions {
+                try ITermLauncher.launch(folder: folder, command: action.shellCommand, split: action.iTermSplit)
+            }
+        } catch {
+            orchestratorError = (error as? LocalizedError)?.errorDescription
                 ?? error.localizedDescription
         }
     }
@@ -201,15 +295,15 @@ struct DashboardView: View {
 // MARK: - Navigation rail
 
 enum NavItem: String, CaseIterable, Identifiable {
-    case dashboard, projects, sessions, agents, settings
+    case dashboard, agents, projects, sessions, settings
     var id: String { rawValue }
 
     var title: String {
         switch self {
         case .dashboard: return "Dashboard"
+        case .agents:    return "Agents"
         case .projects:  return "Projects"
         case .sessions:  return "Sessions"
-        case .agents:    return "Agents"
         case .settings:  return "Settings"
         }
     }
@@ -217,9 +311,9 @@ enum NavItem: String, CaseIterable, Identifiable {
     var systemImage: String {
         switch self {
         case .dashboard: return "square.grid.2x2"
+        case .agents:    return "cpu"
         case .projects:  return "folder"
         case .sessions:  return "rectangle.stack"
-        case .agents:    return "cpu"
         case .settings:  return "gearshape"
         }
     }
