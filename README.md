@@ -2,13 +2,14 @@
 
 macOS menu bar app that shows your Claude Max usage (5-hour session + 7-day) right next to the clock. It reuses the OAuth token that the Claude Code CLI already stores in the macOS Keychain, sends a cheap 1-token request to `api.anthropic.com`, and reads the rate-limit utilization out of the response headers.
 
-It also shows a live **Sessions panel** for any Claude Code sessions running locally, charts your 5h-window usage history, and registers a ⌃⌥Space global hotkey that toggles a notch-attached popover from anywhere.
+It also shows a live **Sessions panel** for any Claude Code sessions running locally, charts your 5h-window usage history, registers a ⌃⌥Space global hotkey that toggles a notch-attached popover from anywhere, and ships a full dashboard window with a **Launch agent** button that opens a folder picker and starts a new Claude Code session in iTerm (as a new tab or split pane in the existing window for that folder).
 
 ## Requirements
 
 - macOS 14+
 - Xcode 15+
 - The Claude Code CLI installed and logged in on this Mac (`claude` in Terminal). TrackMeta reads its OAuth token from the Keychain item `Claude Code-credentials` — it does not store credentials of its own.
+- iTerm2 is required for the **Launch agent** button. macOS will prompt once for permission to control iTerm via Apple Events; click **OK**. Splitting a window left or up additionally requires Accessibility permission (TrackMeta synthesizes ⌘⌥⇧← / ⌘⌥⇧↑ via System Events to move the new pane).
 
 ## Build & run
 
@@ -59,14 +60,19 @@ TrackMeta/
       ClaudeSessionClient.swift      GET http://localhost:7777; polled every 1s
       GlobalHotkey.swift             Carbon ⌃⌥Space → toggle popover
       UsageHistoryStore.swift        UserDefaults-backed sample buffer ("usageHistory.v1")
+      SessionHistoryStore.swift      per-session events / activity buckets / first-seen time (pure ingestion)
+      ITermLauncher.swift            AppleScript launcher; per-folder window cache; tabs or split panes
     ViewModels/
-      UsageViewModel.swift           @Observable; 60s usage refresh + 1s session poll
+      UsageViewModel.swift           @Observable; 60s usage refresh + 1s session poll; owns session histories + expansion state
     Views/
       MenuBarLabel.swift             % indicator, session-elapsed stripe, time-until-reset
       UsagePopover.swift             notch-attached popover with Swift Charts history
-      SessionsSection.swift          live sessions panel; pin persisted ("TrackMeta.sessionsPinned")
+      DashboardView.swift            two-pane dashboard: navigation rail + cards; "Launch agent" button
+      SessionGrid.swift              aggregate header + tile grid (standard / compact); groups by folder
+      SessionTile.swift              per-agent tile, collapsed and expanded layouts, ActivitySparkline
+      SessionVisuals.swift           shared SessionStatusPalette + PulsingDot
       SettingsView.swift             Settings scene body; FloatingWindowConfigurator
-      TrackerLogo.swift
+      TrackerLogo.swift              brand mark + BrandPalette tokens
 TrackMetaTests/                      unit tests
 TrackMetaUITests/                    UI tests
 ```
@@ -89,6 +95,6 @@ xcodebuild ... test -only-testing:TrackMetaTests/TrackMetaTests/<methodName>
 ## Notes
 
 - The app is an `LSUIElement` agent — no Dock icon, only the menu bar extra.
-- Sandbox stays on; the `com.apple.security.network.client` entitlement is what lets it reach `api.anthropic.com` and `localhost:7777`.
+- Sandbox stays on; entitlements granted are: `com.apple.security.network.client` (reaches `api.anthropic.com` and `localhost:7777`), `com.apple.security.automation.apple-events` plus a temporary-exception for `com.googlecode.iterm2` (the iTerm launcher), and `com.apple.security.files.user-selected.read-only` (the Launch-agent folder picker).
 - Auth state is never stored by TrackMeta — it lives in the Claude Code CLI's Keychain item. TrackMeta does persist two small UserDefaults keys for UX state: `usageHistory.v1` (rolling 5h sample buffer) and `TrackMeta.sessionsPinned` (Sessions panel pin toggle).
 - ⌃⌥Space is registered process-wide via Carbon; it toggles the popover whether or not TrackMeta is frontmost.

@@ -73,7 +73,7 @@ private enum MenuBarIconRenderer {
         return image
     }
 
-    private static let accentColor = NSColor(red: 0xD9/255.0, green: 0x77/255.0, blue: 0x57/255.0, alpha: 1.0)
+    private static let accentColor = NSColor(red: 0x4C/255.0, green: 0x8B/255.0, blue: 0xF5/255.0, alpha: 1.0)
 
     private static func drawGlyph(at rect: NSRect) {
         let cx = rect.midX

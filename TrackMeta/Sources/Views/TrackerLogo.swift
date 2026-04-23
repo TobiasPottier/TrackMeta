@@ -55,14 +55,20 @@ struct TrackerLogo: View {
 }
 
 enum BrandPalette {
-    static let accent       = Color(red: 0xD9/255.0, green: 0x77/255.0, blue: 0x57/255.0) // Claude orange
-    static let accentSoft   = Color(red: 0xE8/255.0, green: 0xB0/255.0, blue: 0x8E/255.0)
-    static let accentPale   = Color(red: 0xF3/255.0, green: 0xD6/255.0, blue: 0xC2/255.0)
-    static let ringLight    = Color(white: 0.92)
-    static let panelTop     = Color(red: 0x1B/255.0, green: 0x1E/255.0, blue: 0x24/255.0)
-    static let panelBottom  = Color(red: 0x12/255.0, green: 0x13/255.0, blue: 0x17/255.0)
-    static let border       = Color(red: 0x23/255.0, green: 0x26/255.0, blue: 0x2D/255.0)
-    static let muted        = Color(red: 0x8A/255.0, green: 0x8F/255.0, blue: 0x98/255.0)
+    // Midnight-blue palette (2026 redesign).
+    static let accent       = Color(red: 0x4C/255.0, green: 0x8B/255.0, blue: 0xF5/255.0) // signal blue
+    static let accentSoft   = Color(red: 0x7FA9/65535.0, green: 0xB6F0/65535.0, blue: 0xFBFF/65535.0)
+    static let accentPale   = Color(red: 0xBF/255.0, green: 0xD6/255.0, blue: 0xFB/255.0)
+    static let ringLight    = Color(red: 0xDC/255.0, green: 0xE6/255.0, blue: 0xFA/255.0)
+    static let panelTop     = Color(red: 0x0E/255.0, green: 0x14/255.0, blue: 0x23/255.0)
+    static let panelBottom  = Color(red: 0x08/255.0, green: 0x0C/255.0, blue: 0x17/255.0)
+    static let sidebar      = Color(red: 0x0B/255.0, green: 0x11/255.0, blue: 0x1E/255.0)
+    static let cardFill     = Color(red: 0x10/255.0, green: 0x17/255.0, blue: 0x29/255.0)
+    static let cardFillHi   = Color(red: 0x14/255.0, green: 0x1C/255.0, blue: 0x33/255.0)
+    static let border       = Color(red: 0x1C/255.0, green: 0x25/255.0, blue: 0x3C/255.0)
+    static let borderSoft   = Color(red: 0x17/255.0, green: 0x1F/255.0, blue: 0x33/255.0)
+    static let muted        = Color(red: 0x7A/255.0, green: 0x84/255.0, blue: 0xA0/255.0)
+    static let mutedStrong  = Color(red: 0x9B/255.0, green: 0xA6/255.0, blue: 0xC1/255.0)
 }
 
 #Preview {

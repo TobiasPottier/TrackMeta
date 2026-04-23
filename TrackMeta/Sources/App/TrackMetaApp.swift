@@ -89,21 +89,22 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // dashboard-sized window, not one that shrink-wraps the content.
         host.sizingOptions = []
 
-        let initialSize = NSSize(width: 820, height: 640)
+        let initialSize = NSSize(width: 1120, height: 720)
         let window = NSWindow(
             contentRect: NSRect(origin: .zero, size: initialSize),
-            styleMask: [.titled, .closable, .miniaturizable, .resizable],
+            styleMask: [.titled, .closable, .miniaturizable, .resizable, .fullSizeContentView],
             backing: .buffered,
             defer: false
         )
         window.title = "TrackMeta Dashboard"
         window.isReleasedWhenClosed = false
         window.titlebarAppearsTransparent = true
-        window.backgroundColor = NSColor(red: 0x1B/255.0, green: 0x1E/255.0, blue: 0x24/255.0, alpha: 1.0)
+        window.titleVisibility = .hidden
+        window.backgroundColor = NSColor(red: 0x0B/255.0, green: 0x11/255.0, blue: 0x1E/255.0, alpha: 1.0)
         window.appearance = NSAppearance(named: .darkAqua)
         window.contentViewController = host
         window.setContentSize(initialSize)
-        window.minSize = NSSize(width: 560, height: 480)
+        window.minSize = NSSize(width: 860, height: 560)
         window.center()
         window.collectionBehavior = [.fullScreenPrimary]
         window.delegate = dashboardWindowDelegate
@@ -206,7 +207,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             model: model,
             notchWidth: notch.width,
             onTap: { [weak self] in
-                Task { @MainActor in self?.toggleDashboard(nil) }
+                Task { @MainActor in self?.openDashboard() }
             },
             onUnpin: { [weak self] in
                 Task { @MainActor in self?.toggleSessionsPinned() }
@@ -366,7 +367,7 @@ struct NotchPillContainer: View {
                     .transition(sessionsTransition)
                 } else {
                     PinnedSessionsDrawer(
-                        sessions: model.sessions,
+                        model: model,
                         onCollapse: { model.sessionsPinnedCollapsed = true },
                         onUnpin: onUnpin
                     )
@@ -432,27 +433,13 @@ private struct SessionDotsCapsule: View {
 }
 
 private struct PinnedSessionsDrawer: View {
-    let sessions: [ClaudeSession]
+    @Bindable var model: UsageViewModel
     let onCollapse: () -> Void
     let onUnpin: () -> Void
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
             HStack(spacing: 6) {
-                Text("Sessions")
-                    .font(.system(size: 10, weight: .semibold))
-                    .tracking(0.4)
-                    .textCase(.uppercase)
-                    .foregroundStyle(.white.opacity(0.55))
-                Text("\(sessions.count)")
-                    .font(.system(size: 10, weight: .semibold))
-                    .monospacedDigit()
-                    .foregroundStyle(.white.opacity(0.75))
-                    .padding(.horizontal, 5)
-                    .padding(.vertical, 1)
-                    .background(
-                        Capsule().fill(Color.white.opacity(0.08))
-                    )
                 Button(action: onCollapse) {
                     Image(systemName: "chevron.up")
                         .font(.system(size: 9, weight: .semibold))
@@ -473,25 +460,13 @@ private struct PinnedSessionsDrawer: View {
                 .buttonStyle(.plain)
                 .help("Unpin sessions")
             }
-            .padding(.horizontal, 14)
-            .padding(.top, 10)
-            .padding(.bottom, 6)
+            .padding(.horizontal, 12)
+            .padding(.top, 8)
+            .padding(.bottom, 4)
 
-            if sessions.isEmpty {
-                Text("No active sessions")
-                    .font(.system(size: 10))
-                    .foregroundStyle(.white.opacity(0.45))
-                    .padding(.horizontal, 14)
-                    .padding(.bottom, 12)
-            } else {
-                VStack(spacing: 4) {
-                    ForEach(sessions) { session in
-                        PinnedSessionRow(session: session)
-                    }
-                }
+            SessionGrid(model: model, variant: .compact)
                 .padding(.horizontal, 10)
                 .padding(.bottom, 10)
-            }
         }
         .frame(maxWidth: .infinity)
         .background(
@@ -508,72 +483,6 @@ private struct PinnedSessionsDrawer: View {
         )
         .shadow(color: .black.opacity(0.35), radius: 12, x: 0, y: 6)
         .padding(.horizontal, 4)
-    }
-}
-
-private struct PinnedSessionRow: View {
-    let session: ClaudeSession
-
-    var body: some View {
-        HStack(spacing: 8) {
-            statusDot
-            Text(title)
-                .font(.system(size: 10, weight: .medium))
-                .foregroundStyle(.white)
-                .lineLimit(1)
-                .truncationMode(.tail)
-            Spacer(minLength: 6)
-            Text(folderLabel)
-                .font(.system(size: 9).monospaced())
-                .foregroundStyle(.white.opacity(0.55))
-                .lineLimit(1)
-                .truncationMode(.middle)
-        }
-        .padding(.horizontal, 10)
-        .padding(.vertical, 6)
-        .background(
-            RoundedRectangle(cornerRadius: 10, style: .continuous)
-                .fill(background)
-        )
-        .overlay(
-            RoundedRectangle(cornerRadius: 10, style: .continuous)
-                .stroke(border, lineWidth: 0.5)
-        )
-    }
-
-    @ViewBuilder private var statusDot: some View {
-        switch session.status {
-        case .working, .awaitingInput:
-            PulsingDot(color: statusColor)
-        case .idle:
-            Circle().fill(statusColor).frame(width: 6, height: 6)
-        }
-    }
-
-    private var title: String {
-        session.summary ?? "--"
-    }
-
-    private var folderLabel: String {
-        session.cwdDisplayName ?? String(session.sessionId.prefix(8))
-    }
-
-    private var statusColor: Color { SessionStatusPalette.color(for: session.status) }
-
-    private var background: Color {
-        switch session.status {
-        case .working:       return statusColor.opacity(0.10)
-        case .awaitingInput: return statusColor.opacity(0.14)
-        case .idle:          return Color.white.opacity(0.04)
-        }
-    }
-
-    private var border: Color {
-        switch session.status {
-        case .working:       return statusColor.opacity(0.30)
-        case .awaitingInput: return statusColor.opacity(0.40)
-        case .idle:          return statusColor.opacity(0.20)
-        }
     }
 }
 

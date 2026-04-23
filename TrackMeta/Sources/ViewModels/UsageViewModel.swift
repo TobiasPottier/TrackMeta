@@ -6,7 +6,11 @@ final class UsageViewModel {
     private(set) var state: UsageLoadState = .idle
     private(set) var history: [UsageSample] = []
     private(set) var sessions: [ClaudeSession] = []
+    private(set) var sessionHistories: [String: SessionHistory] = [:]
+    private(set) var expandedSessionIds: Set<String> = []
+    private var autoExpandExpiry: [String: Date] = [:]
     private var dismissedSessionIds: Set<String> = []
+    private static let autoExpandDuration: TimeInterval = 8
     var sessionsPinned: Bool {
         didSet { UserDefaults.standard.set(sessionsPinned, forKey: Self.pinnedKey) }
     }
@@ -67,12 +71,62 @@ final class UsageViewModel {
         }
         let fetchedIds = Set(fetched.map(\.sessionId))
         dismissedSessionIds = dismissedSessionIds.intersection(fetchedIds)
-        sessions = fetched.filter { !dismissedSessionIds.contains($0.sessionId) }
+        let visible = fetched.filter { !dismissedSessionIds.contains($0.sessionId) }
+        ingest(sessions: visible, at: Date())
+        sessions = visible
+    }
+
+    /// Folds new session observations into the per-session history store and
+    /// flips auto-expand on for sessions that just became `awaitingInput`.
+    private func ingest(sessions next: [ClaudeSession], at now: Date) {
+        var updated: [String: SessionHistory] = [:]
+        for session in next {
+            if let prior = sessionHistories[session.sessionId] {
+                let newHistory = SessionHistoryIngestion.update(prior, with: session, at: now)
+                updated[session.sessionId] = newHistory
+                if prior.lastStatus != .awaitingInput, session.status == .awaitingInput {
+                    autoExpandExpiry[session.sessionId] = now.addingTimeInterval(Self.autoExpandDuration)
+                }
+            } else {
+                updated[session.sessionId] = SessionHistoryIngestion.initial(from: session, at: now)
+                if session.status == .awaitingInput {
+                    autoExpandExpiry[session.sessionId] = now.addingTimeInterval(Self.autoExpandDuration)
+                }
+            }
+        }
+        sessionHistories = updated
+        pruneAutoExpand(at: now, validIds: Set(next.map(\.sessionId)))
+    }
+
+    private func pruneAutoExpand(at now: Date, validIds: Set<String>) {
+        autoExpandExpiry = autoExpandExpiry.filter { id, expiry in
+            validIds.contains(id) && expiry > now
+        }
+    }
+
+    /// True when a session should render in its expanded form — either the
+    /// user clicked to expand, or an auto-expand window is still active.
+    func isExpanded(_ sessionId: String, at now: Date = Date()) -> Bool {
+        if expandedSessionIds.contains(sessionId) { return true }
+        if let expiry = autoExpandExpiry[sessionId], expiry > now { return true }
+        return false
+    }
+
+    func toggleExpanded(_ sessionId: String) {
+        if expandedSessionIds.contains(sessionId) {
+            expandedSessionIds.remove(sessionId)
+        } else {
+            expandedSessionIds.insert(sessionId)
+        }
+        autoExpandExpiry.removeValue(forKey: sessionId)
     }
 
     func dismissSession(_ sessionId: String) {
         dismissedSessionIds.insert(sessionId)
         sessions = sessions.filter { $0.sessionId != sessionId }
+        sessionHistories.removeValue(forKey: sessionId)
+        expandedSessionIds.remove(sessionId)
+        autoExpandExpiry.removeValue(forKey: sessionId)
         Task { [sessionClient] in
             try? await sessionClient.deleteSession(sessionId)
         }
