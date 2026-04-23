@@ -343,25 +343,27 @@ struct SessionUsageChart: View {
                     .foregroundStyle(Color.white.opacity(0.55))
                     .lineStyle(StrokeStyle(lineWidth: 1))
 
-                PointMark(
-                    x: .value("Now", min(max(now, sessionStart), sessionEnd)),
-                    y: .value("Usage", bucket.percent)
-                )
-                .symbolSize(36)
-                .foregroundStyle(chartColor)
-                .annotation(position: .trailing, alignment: .leading, spacing: 4) {
-                    Text("\(Int(bucket.percent.rounded()))%")
-                        .font(.system(size: 10, weight: .semibold))
-                        .monospacedDigit()
-                        .foregroundStyle(chartColor)
-                        .padding(.horizontal, 5)
-                        .padding(.vertical, 1)
-                        .background(
-                            Capsule().fill(Color.black.opacity(0.35))
-                        )
-                        .overlay(
-                            Capsule().stroke(chartColor.opacity(0.5), lineWidth: 0.5)
-                        )
+                if let last = history.last {
+                    PointMark(
+                        x: .value("Current", last.timestamp),
+                        y: .value("Usage", last.fiveHourPercent)
+                    )
+                    .symbolSize(36)
+                    .foregroundStyle(chartColor)
+                    .annotation(position: .top, alignment: .center, spacing: 4) {
+                        Text("\(Int(last.fiveHourPercent.rounded()))%")
+                            .font(.system(size: 10, weight: .semibold))
+                            .monospacedDigit()
+                            .foregroundStyle(chartColor)
+                            .padding(.horizontal, 5)
+                            .padding(.vertical, 1)
+                            .background(
+                                Capsule().fill(Color.black.opacity(0.35))
+                            )
+                            .overlay(
+                                Capsule().stroke(chartColor.opacity(0.5), lineWidth: 0.5)
+                            )
+                    }
                 }
             }
             .chartXScale(domain: sessionStart...sessionEnd)

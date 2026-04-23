@@ -1,18 +1,13 @@
 import SwiftUI
 import AppKit
 
-/// Unified panel that merges saved project folders with live agent sessions.
-/// Each folder row shows orchestrate / launch actions; active sessions appear
-/// indented underneath with a visual hierarchy indicator. Stored folders appear
-/// first (in saved order), followed by any ad-hoc folders inferred from session
-/// working directories.
+/// Read-only overview of live Claude Code sessions, grouped by their working
+/// directory. Each group shows a folder header plus indented SessionTiles.
 struct ProjectFoldersPanel: View {
     @Bindable var model: UsageViewModel
     var variant: SessionTile.Variant = .standard
     var isPinned: Bool = false
     var onTogglePin: (() -> Void)? = nil
-    var onOrchestrate: ((URL) -> Void)? = nil
-    var onLaunchAgent: ((URL, ITermSplit?) -> Void)? = nil
 
     var body: some View {
         VStack(alignment: .leading, spacing: variant == .compact ? 8 : 10) {
@@ -32,10 +27,10 @@ struct ProjectFoldersPanel: View {
 
     private var panelHeader: some View {
         HStack(spacing: 8) {
-            Image(systemName: "folder.badge.gearshape")
+            Image(systemName: "rectangle.stack")
                 .font(.system(size: variant == .compact ? 10 : 12))
                 .foregroundStyle(BrandPalette.accent)
-            Text("Projects")
+            Text("Sessions")
                 .font(.system(size: variant == .compact ? 11 : 13, weight: .semibold))
                 .foregroundStyle(.white)
             if !model.sessions.isEmpty {
@@ -56,39 +51,9 @@ struct ProjectFoldersPanel: View {
                         .background(Circle().fill(Color.white.opacity(0.08)))
                 }
                 .buttonStyle(.plain)
-                .help(isPinned ? "Unpin sessions" : "Pin sessions to notch")
+                .help(isPinned ? "Unpin sessions from notch" : "Pin sessions to notch")
             }
-            addFolderButton
         }
-    }
-
-    private var addFolderButton: some View {
-        Button {
-            let panel = NSOpenPanel()
-            panel.title = "Add project folder"
-            panel.prompt = "Add"
-            panel.canChooseFiles = false
-            panel.canChooseDirectories = true
-            panel.allowsMultipleSelection = false
-            if panel.runModal() == .OK, let url = panel.url {
-                model.addOrchestratorFolder(url)
-            }
-        } label: {
-            Label("Add folder", systemImage: "plus")
-                .font(.system(size: 10, weight: .semibold))
-                .padding(.horizontal, 8)
-                .padding(.vertical, 4)
-                .background(
-                    RoundedRectangle(cornerRadius: 6, style: .continuous)
-                        .fill(BrandPalette.accent.opacity(0.16))
-                )
-                .overlay(
-                    RoundedRectangle(cornerRadius: 6, style: .continuous)
-                        .stroke(BrandPalette.accent.opacity(0.4), lineWidth: 1)
-                )
-                .foregroundStyle(BrandPalette.accent)
-        }
-        .buttonStyle(.plain)
     }
 
     // MARK: - Folder section
@@ -158,11 +123,6 @@ struct ProjectFoldersPanel: View {
             }
 
             Spacer(minLength: 4)
-
-            HStack(spacing: 4) {
-                launchButton(for: group.folderURL)
-                orchestrateButton(for: group.folderURL)
-            }
         }
         .padding(.horizontal, 10)
         .padding(.vertical, variant == .compact ? 7 : 9)
@@ -187,63 +147,6 @@ struct ProjectFoldersPanel: View {
         return BrandPalette.muted
     }
 
-    // MARK: - Action buttons
-
-    private func launchButton(for folder: URL) -> some View {
-        HStack(spacing: 3) {
-            Button { onLaunchAgent?(folder, nil) } label: {
-                Image(systemName: "plus")
-                    .font(.system(size: 9, weight: .bold))
-                    .foregroundStyle(BrandPalette.accent)
-                    .padding(4)
-                    .background(Circle().fill(BrandPalette.accent.opacity(0.18)))
-                    .overlay(Circle().stroke(BrandPalette.accent.opacity(0.4), lineWidth: 1))
-            }
-            .buttonStyle(.plain)
-            .help("Launch new agent in \(folder.lastPathComponent)")
-
-            Menu {
-                Button { onLaunchAgent?(folder, .right) } label: {
-                    Label("Split right", systemImage: "rectangle.righthalf.inset.filled")
-                }
-                Button { onLaunchAgent?(folder, .left) } label: {
-                    Label("Split left", systemImage: "rectangle.lefthalf.inset.filled")
-                }
-                Button { onLaunchAgent?(folder, .down) } label: {
-                    Label("Split down", systemImage: "rectangle.bottomhalf.inset.filled")
-                }
-                Button { onLaunchAgent?(folder, .up) } label: {
-                    Label("Split up", systemImage: "rectangle.tophalf.inset.filled")
-                }
-            } label: {
-                Image(systemName: "chevron.down")
-                    .font(.system(size: 7, weight: .bold))
-                    .foregroundStyle(BrandPalette.accent)
-                    .padding(.horizontal, 4)
-                    .padding(.vertical, 4)
-                    .background(Capsule().fill(BrandPalette.accent.opacity(0.12)))
-                    .overlay(Capsule().stroke(BrandPalette.accent.opacity(0.3), lineWidth: 1))
-            }
-            .menuStyle(.borderlessButton)
-            .menuIndicator(.hidden)
-            .fixedSize()
-            .help("Split iTerm with new agent")
-        }
-    }
-
-    private func orchestrateButton(for folder: URL) -> some View {
-        Button { onOrchestrate?(folder) } label: {
-            Image(systemName: "wand.and.sparkles")
-                .font(.system(size: 9, weight: .semibold))
-                .foregroundStyle(BrandPalette.accent)
-                .padding(5)
-                .background(Circle().fill(BrandPalette.accent.opacity(0.18)))
-                .overlay(Circle().stroke(BrandPalette.accent.opacity(0.4), lineWidth: 1))
-        }
-        .buttonStyle(.plain)
-        .help("Orchestrate agents in \(folder.lastPathComponent)")
-    }
-
     // MARK: - Session tiles
 
     @ViewBuilder
@@ -260,8 +163,7 @@ struct ProjectFoldersPanel: View {
                     isExpanded: model.isExpanded(session.sessionId),
                     variant: variant,
                     onToggleExpand: { model.toggleExpanded(session.sessionId) },
-                    onDismiss: { model.dismissSession(session.sessionId) },
-                    onFocus: session.cwd.map { cwd in { _ = try? ITermLauncher.focus(cwd: cwd) } }
+                    onDismiss: { model.dismissSession(session.sessionId) }
                 )
             }
         }
@@ -272,13 +174,13 @@ struct ProjectFoldersPanel: View {
 
     private var emptyState: some View {
         VStack(spacing: 10) {
-            Image(systemName: "folder.badge.plus")
+            Image(systemName: "rectangle.stack.badge.xmark")
                 .font(.system(size: 20))
                 .foregroundStyle(BrandPalette.muted.opacity(0.5))
-            Text("No projects yet")
+            Text("No active sessions")
                 .font(.system(size: 12, weight: .medium))
                 .foregroundStyle(BrandPalette.muted)
-            Text("Add a folder to launch and orchestrate agents")
+            Text("Start a Claude Code session in your IDE to see it here")
                 .font(.system(size: 10))
                 .foregroundStyle(BrandPalette.muted.opacity(0.7))
         }

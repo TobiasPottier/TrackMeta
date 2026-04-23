@@ -27,7 +27,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var globalHotkey: GlobalHotkey?
 
     private var dashboardWindow: NSWindow?
-    private var agentsPanelWindow: NSWindow?
+    private var dashboardPinned: Bool = UserDefaults.standard.bool(forKey: "TrackMeta.dashboardPinned")
+    private static let pinnedKey = "TrackMeta.dashboardPinned"
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         let item = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
@@ -69,31 +70,21 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     private func openDashboard() {
-        // LSUIElement apps can't bring regular windows forward without
-        // temporarily becoming a regular (Dock-visible) app.
         NSApp.setActivationPolicy(.regular)
 
         if let window = dashboardWindow {
+            applyPinnedBehavior(to: window)
             window.makeKeyAndOrderFront(nil)
             NSApp.activate(ignoringOtherApps: true)
             return
         }
 
-        let root = DashboardView(
-            model: model,
-            onTogglePinSessions: { [weak self] in
-                Task { @MainActor in self?.model.sessionsPinned.toggle() }
-            },
-            onToggleAgentsPanel: { [weak self] in
-                Task { @MainActor in self?.toggleAgentsPanel() }
-            }
-        )
-        let host = NSHostingController(rootView: root)
+        let host = NSHostingController(rootView: makeDashboardRoot())
         // Don't let SwiftUI's fitting size drive the window — we want a full
         // dashboard-sized window, not one that shrink-wraps the content.
         host.sizingOptions = []
 
-        let initialSize = NSSize(width: 1120, height: 720)
+        let initialSize = NSSize(width: 920, height: 700)
         let window = NSWindow(
             contentRect: NSRect(origin: .zero, size: initialSize),
             styleMask: [.titled, .closable, .miniaturizable, .resizable, .fullSizeContentView],
@@ -108,14 +99,53 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         window.appearance = NSAppearance(named: .darkAqua)
         window.contentViewController = host
         window.setContentSize(initialSize)
-        window.minSize = NSSize(width: 860, height: 560)
+        window.minSize = NSSize(width: 720, height: 540)
         window.center()
-        window.collectionBehavior = [.fullScreenPrimary]
         window.delegate = dashboardWindowDelegate
 
         dashboardWindow = window
+        applyPinnedBehavior(to: window)
         window.makeKeyAndOrderFront(nil)
         NSApp.activate(ignoringOtherApps: true)
+    }
+
+    private func makeDashboardRoot() -> DashboardView {
+        DashboardView(
+            model: model,
+            onTogglePinSessions: { [weak self] in
+                Task { @MainActor in self?.model.sessionsPinned.toggle() }
+            },
+            isWindowPinned: dashboardPinned,
+            onToggleWindowPin: { [weak self] in
+                Task { @MainActor in self?.toggleDashboardPinned() }
+            }
+        )
+    }
+
+    private func toggleDashboardPinned() {
+        dashboardPinned.toggle()
+        UserDefaults.standard.set(dashboardPinned, forKey: Self.pinnedKey)
+        if let window = dashboardWindow {
+            applyPinnedBehavior(to: window)
+        }
+        refreshDashboardRoot()
+    }
+
+    /// Raises the dashboard above other apps when pinned, otherwise restores
+    /// normal window behavior.
+    private func applyPinnedBehavior(to window: NSWindow) {
+        if dashboardPinned {
+            window.level = .floating
+            window.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
+        } else {
+            window.level = .normal
+            window.collectionBehavior = [.fullScreenPrimary]
+        }
+    }
+
+    private func refreshDashboardRoot() {
+        guard let host = dashboardWindow?.contentViewController as? NSHostingController<DashboardView> else { return }
+        host.rootView = makeDashboardRoot()
     }
 
     private func dashboardDidClose() {
@@ -129,82 +159,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
     }()
 
-    // MARK: - Agents panel
-
-    private func toggleAgentsPanel() {
-        if let window = agentsPanelWindow, window.isVisible {
-            window.close()
-            return
-        }
-        openAgentsPanel()
-    }
-
-    private func openAgentsPanel() {
-        NSApp.setActivationPolicy(.regular)
-
-        if let window = agentsPanelWindow {
-            window.makeKeyAndOrderFront(nil)
-            NSApp.activate(ignoringOtherApps: true)
-            return
-        }
-
-        let root = AgentsPanelView(model: model)
-        let host = NSHostingController(rootView: root)
-        host.sizingOptions = []
-
-        let initialSize = NSSize(width: 600, height: 700)
-        let panel = NSPanel(
-            contentRect: NSRect(origin: .zero, size: initialSize),
-            styleMask: [.titled, .closable, .resizable, .nonactivatingPanel, .fullSizeContentView, .utilityWindow],
-            backing: .buffered,
-            defer: false
-        )
-        panel.title = "Agents"
-        panel.isReleasedWhenClosed = false
-        panel.isFloatingPanel = true
-        panel.level = .floating
-        panel.hidesOnDeactivate = false
-        panel.titlebarAppearsTransparent = true
-        panel.titleVisibility = .hidden
-        panel.backgroundColor = NSColor(red: 0x0B/255.0, green: 0x11/255.0, blue: 0x1E/255.0, alpha: 1.0)
-        panel.appearance = NSAppearance(named: .darkAqua)
-        panel.contentViewController = host
-        panel.setContentSize(initialSize)
-        panel.minSize = NSSize(width: 480, height: 400)
-        panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .stationary]
-        panel.delegate = agentsPanelWindowDelegate
-
-        // Position the panel at the top-right of the main screen
-        if let screen = NSScreen.main {
-            let visibleFrame = screen.visibleFrame
-            let x = visibleFrame.maxX - initialSize.width - 20
-            let y = visibleFrame.maxY - initialSize.height - 20
-            panel.setFrameOrigin(NSPoint(x: x, y: y))
-        } else {
-            panel.center()
-        }
-
-        agentsPanelWindow = panel
-        panel.makeKeyAndOrderFront(nil)
-        NSApp.activate(ignoringOtherApps: true)
-        dashboardWindow?.close()
-    }
-
-    private func agentsPanelDidClose() {
-        agentsPanelWindow = nil
-        updateActivationPolicy()
-    }
-
-    private lazy var agentsPanelWindowDelegate: AgentsPanelWindowDelegate = {
-        AgentsPanelWindowDelegate { [weak self] in
-            Task { @MainActor in self?.agentsPanelDidClose() }
-        }
-    }()
-
-    /// Returns to accessory (no Dock icon) only when both main windows are closed.
+    /// Returns to accessory (no Dock icon) when the dashboard window is closed.
     private func updateActivationPolicy() {
-        let anyWindowOpen = (dashboardWindow?.isVisible == true) || (agentsPanelWindow?.isVisible == true)
-        if !anyWindowOpen {
+        if dashboardWindow?.isVisible != true {
             NSApp.setActivationPolicy(.accessory)
         }
     }
@@ -643,18 +600,6 @@ private struct MiniUsageBar: View {
 }
 
 final class DashboardWindowDelegate: NSObject, NSWindowDelegate {
-    private let onClose: () -> Void
-
-    init(onClose: @escaping () -> Void) {
-        self.onClose = onClose
-    }
-
-    func windowWillClose(_ notification: Notification) {
-        onClose()
-    }
-}
-
-final class AgentsPanelWindowDelegate: NSObject, NSWindowDelegate {
     private let onClose: () -> Void
 
     init(onClose: @escaping () -> Void) {

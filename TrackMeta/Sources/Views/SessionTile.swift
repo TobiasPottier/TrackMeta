@@ -12,7 +12,6 @@ struct SessionTile: View {
     var variant: Variant = .standard
     var onToggleExpand: (() -> Void)? = nil
     var onDismiss: (() -> Void)? = nil
-    var onFocus: (() -> Void)? = nil
 
     @State private var now: Date = Date()
     @State private var displayedAction: String = ""
@@ -80,15 +79,6 @@ struct SessionTile: View {
                 .font(.system(size: 10, weight: .medium).monospacedDigit())
                 .foregroundStyle(BrandPalette.muted)
             actionIcon
-            if let onFocus, session.cwd != nil {
-                Button(action: onFocus) {
-                    Image(systemName: "eye")
-                        .font(.system(size: 10, weight: .semibold))
-                        .foregroundStyle(BrandPalette.muted)
-                        .frame(width: 14)
-                }
-                .buttonStyle(.plain)
-            }
             if isExpanded, onToggleExpand != nil {
                 Image(systemName: "chevron.up")
                     .font(.system(size: 9, weight: .semibold))
@@ -103,7 +93,7 @@ struct SessionTile: View {
                 .font(.system(size: 9))
                 .foregroundStyle(BrandPalette.muted.opacity(0.4))
             ZStack {
-                actionText(displayedAction)
+                actionText(displayedAction, target: session.lastToolTarget)
                     .font(.system(size: 10))
                     .foregroundStyle(BrandPalette.muted)
                     .lineLimit(1)
@@ -129,15 +119,17 @@ struct SessionTile: View {
     }
 
     private var eventLineContent: Text {
-        if let tool = session.lastTool, !tool.isEmpty { return actionText(tool) }
+        if let tool = session.lastTool, !tool.isEmpty {
+            return actionText(tool, target: session.lastToolTarget)
+        }
         if let name = session.cwdDisplayName { return Text(name) }
         return Text("—")
     }
 
-    private func actionText(_ raw: String) -> Text {
+    private func actionText(_ raw: String, target: String? = nil) -> Text {
         let parsed = Self.parseAction(raw)
         let action = parsed.action.isEmpty ? raw : parsed.action
-        if let target = session.lastToolTarget,
+        if let target,
            !target.isEmpty,
            Self.fileTools.contains(action) {
             let file = URL(fileURLWithPath: target).lastPathComponent
@@ -284,7 +276,7 @@ struct SessionTile: View {
                 .font(.system(size: 9))
                 .foregroundStyle(BrandPalette.muted)
                 .frame(width: 12)
-            Text(eventText(event.kind))
+            eventText(event.kind)
                 .font(.system(size: 10))
                 .foregroundStyle(.white.opacity(0.85))
                 .lineLimit(1)
@@ -389,15 +381,17 @@ struct SessionTile: View {
         }
     }
 
-    private func eventText(_ kind: SessionEvent.Kind) -> String {
+    private func eventText(_ kind: SessionEvent.Kind) -> Text {
         switch kind {
-        case .toolChanged(let tool):        return tool
-        case .summaryChanged(let summary):  return summary
+        case .toolChanged(let tool, let target):
+            return actionText(tool, target: target)
+        case .summaryChanged(let summary):
+            return Text(summary)
         case .statusChanged(let status):
             switch status {
-            case .working:        return "Started working"
-            case .awaitingInput:  return "Awaiting input"
-            case .idle:           return "Went idle"
+            case .working:        return Text("Started working")
+            case .awaitingInput:  return Text("Awaiting input")
+            case .idle:           return Text("Went idle")
             }
         }
     }

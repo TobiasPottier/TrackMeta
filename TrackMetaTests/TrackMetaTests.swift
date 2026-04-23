@@ -73,10 +73,52 @@ struct TrackMetaTests {
         #expect(snapshot.sevenDay.resetsAt != nil)
     }
 
+    @Test func sessionHistoryAddsToolEventWhenOnlyTargetChanges() {
+        let now = Date()
+        let initialSession = Self.session(lastTool: "Read", lastToolTarget: "/tmp/one.swift")
+        let updatedSession = Self.session(lastTool: "Read", lastToolTarget: "/tmp/two.swift")
+
+        let history = SessionHistoryIngestion.initial(from: initialSession, at: now)
+        let updated = SessionHistoryIngestion.update(
+            history,
+            with: updatedSession,
+            at: now.addingTimeInterval(5)
+        )
+
+        #expect(updated.lastTool == "Read")
+        #expect(updated.lastToolTarget == "/tmp/two.swift")
+        #expect(updated.events.count == history.events.count + 1)
+
+        guard case .toolChanged(let tool, let target) = updated.events.last?.kind else {
+            Issue.record("Expected a toolChanged event")
+            return
+        }
+
+        #expect(tool == "Read")
+        #expect(target == "/tmp/two.swift")
+    }
+
     private static func mockSession() -> URLSession {
         let config = URLSessionConfiguration.ephemeral
         config.protocolClasses = [MockURLProtocol.self]
         return URLSession(configuration: config)
+    }
+
+    private static func session(
+        status: ClaudeSession.Status = .working,
+        lastTool: String? = nil,
+        lastToolTarget: String? = nil
+    ) -> ClaudeSession {
+        ClaudeSession(
+            sessionId: UUID().uuidString,
+            status: status,
+            lastTool: lastTool,
+            lastToolTarget: lastToolTarget,
+            cwd: "/tmp/project",
+            summary: "Session",
+            idleForSeconds: 0,
+            contextPercentage: nil
+        )
     }
 
 }

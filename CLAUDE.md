@@ -8,14 +8,11 @@ TrackMeta is a macOS menu bar (`MenuBarExtra`) SwiftUI app that surfaces Claude 
 
 Beyond the core usage readout, the app also:
 
-- Polls `http://localhost:7777` once per second for live Claude Code sessions (status / last tool / last-tool-target / cwd / summary / context_percentage) and renders them under a unified **Projects** panel. A connection failure is not an error — empty sessions is a valid state.
+- Polls `http://localhost:7777` once per second for live Claude Code sessions (status / last tool / last-tool-target / cwd / summary / context_percentage) and groups them by their working directory in a read-only **Sessions** panel. A connection failure is not an error — empty sessions is a valid state. TrackMeta does **not** start sessions or control iTerm; session lifecycle is owned by the user's IDE / CLI.
 - Buffers per-session metadata locally (first-seen time, recent events, per-minute activity buckets) so each tile can show an elapsed timer, an activity sparkline, and a short event log even though the server itself is stateless.
 - Persists a rolling buffer of 5h-window usage samples and plots them as a Swift Charts history in the popover.
-- Registers a process-wide ⌃⌥Space global hotkey (Carbon API) that toggles a notch-attached popover.
-- Opens a full dashboard window (1120x720, midnight-blue redesign) with a navigation rail split into a **Dashboard** tab and an **Agents** tab. The unified Projects panel lists saved project folders merged with live sessions; each folder row has an inline **Launch agent** (new tab or split right/left/up/down) action and an **Orchestrate** action (wand icon). Saved folders persist to UserDefaults (`TrackMeta.orchestratorFolders`).
-- Offers an **Orchestrate** workflow: the user picks a folder and types a natural-language prompt; `OrchestratorClient` sends a Haiku `POST /v1/messages` request whose system prompt instructs Claude to return JSON `{actions: [{model, prompt, split}]}`, and the app launches one iTerm session per action via `ITermLauncher` (each running `claude --dangerously-skip-permissions --model <model> '<prompt>'`).
-- Offers a **Float** button on the Agents tab that opens `AgentsPanelView` as a floating `NSPanel` (utility window, `.floating` level, stays above other apps). The dashboard window closes when the floating panel opens; the app only drops back to `.accessory` activation policy once both windows are closed.
-- `ITermLauncher.focus(cwd:)` brings a previously-launched iTerm tab to the front by matching cached iTerm session `unique id`s. Necessary because reading another process's cwd (lsof / proc_pidinfo) is sandbox-restricted and iTerm's `session.path` variable throws -1723 for sessions that haven't populated it.
+- Registers a process-wide ⌃⌥Space global hotkey (Carbon API) that toggles the dashboard window.
+- Opens a single dashboard window (1120x720, midnight-blue redesign) that shows peak hours, 5-hour usage, the usage chart, weekly usage, and the Sessions panel. A **Pin** button in the header toggles the dashboard's window level to `.floating` so it stays above other apps — this is the only floating UI (there is no separate floating panel).
 - Raises the Settings window above the status bar via a FloatingWindowConfigurator.
 
 Credentials come from the Claude Code CLI's OAuth access token, read out of the macOS Keychain (service `Claude Code-credentials`, JSON value, `claudeAiOauth.accessToken`). The app does not store credentials of its own, but it **does** persist three UserDefaults keys: `usageHistory.v1` (sample buffer), `TrackMeta.sessionsPinned` (pin toggle), and `TrackMeta.orchestratorFolders` (saved project folder paths).
@@ -48,9 +45,7 @@ Target: macOS 14+. App is an `LSUIElement` agent (no Dock icon). Needs outbound 
 - When the token expires, requests return 401 → user runs `claude /login` and hits Reload.
 - When Anthropic returns 429 or 439, treat it as Claude Max usage-cap reached, not a hard load error. The UI should render the normal app, mark the cap as reached, preserve the last known usage percentages if the capped response omits utilization headers, and continue showing sessions.
 - The Sessions panel depends on a local sessions server reachable at `http://localhost:7777`. If it isn't running, the Sessions section stays empty but the usage readout still works.
-- ⌃⌥Space is registered as a process-wide hotkey that toggles the popover from anywhere.
-- The first time the user clicks **Launch agent** (or the per-session "+" / split menu), macOS prompts to allow TrackMeta to control iTerm via Apple Events. Without **OK** the launcher fails with a sandbox/AppleScript error. The split-left / split-up directions additionally synthesize a ⌘⌥⇧← / ⌘⌥⇧↑ keystroke through System Events, which triggers a one-time Accessibility permission prompt.
-- iTerm2 (`com.googlecode.iterm2`) must be installed for the launcher; the entitlements only allow Apple Events to that bundle id.
+- ⌃⌥Space is registered as a process-wide hotkey that toggles the dashboard window from anywhere.
 
 ## Architecture
 
@@ -58,37 +53,29 @@ Layered, one-way data flow: Keychain → Client → ViewModel → Views. Everyth
 
 ```
 Sources/
-  App/TrackMetaApp.swift            @main; MenuBarExtra(.window) + Settings scene; wires hotkey + popover + dashboard + floating Agents panel (NSPanel)
+  App/TrackMetaApp.swift            @main; MenuBarExtra(.window) + Settings scene; wires hotkey + notch pill + dashboard window; owns the dashboard "pin to floating" toggle
   Models/
     UsageSnapshot.swift             UsageBucket, UsageSnapshot, UsageLoadState, sessionProgress(...)
     ClaudeSession.swift             ClaudeSession model (status / lastTool / lastToolTarget / cwd / summary / contextPercentage)
-    OrchestratorAction.swift        Decodable {model, prompt, split}; maps model name → claude CLI --model flag; builds shellCommand
     PeakHours.swift
   Services/
     ClaudeCredentialsStore.swift    SecItemCopyMatching → parses claudeAiOauth.accessToken
     ClaudeUsageClient.swift         POST /v1/messages; snapshot built from response headers; 429/439 treated as capped; preserves prior utilization when headers absent
     ClaudeSessionClient.swift       GET http://localhost:7777 → [ClaudeSession]; polled every 1s
-    OrchestratorClient.swift        POST /v1/messages to Haiku with a JSON-only system prompt; parses {actions:[...]}; strips accidental ```json fences
-    OrchestratorFoldersStore.swift  UserDefaults-backed saved project folder paths (key "TrackMeta.orchestratorFolders")
-    GlobalHotkey.swift              Carbon process-wide ⌃⌥Space → toggle popover
+    GlobalHotkey.swift              Carbon process-wide ⌃⌥Space → toggle dashboard
     UsageHistoryStore.swift         UserDefaults-backed 5h sample buffer (key "usageHistory.v1")
     SessionHistoryStore.swift       SessionHistory + SessionHistoryIngestion (pure); per-session events / activity buckets / firstSeenAt
-    ITermLauncher.swift             AppleScript launcher; per-folder window-id cache + per-folder iTerm session `unique id` cache (cap 8) for focus(cwd:); new tab or split right/left/up/down; reuses iTerm's startup window when iTerm wasn't already running
-  ViewModels/UsageViewModel.swift   @Observable; 60s usage loop + 1s session loop; owns sessions, sessionHistories, expandedSessionIds, autoExpand window, sessionsPinned, orchestratorFolders, unifiedFolderGroups (saved folders merged with ad-hoc session cwds)
+  ViewModels/UsageViewModel.swift   @Observable; 60s usage loop + 1s session loop; owns sessions, sessionHistories, expandedSessionIds, autoExpand window, sessionsPinned, unifiedFolderGroups (live sessions grouped by cwd)
   Views/
     MenuBarLabel.swift              110pt indicator: % + session-elapsed stripe + center dot + time-until-reset
     UsagePopover.swift              notch-attached popover (NotchIslandShape), 560pt wide, Swift Charts usage history
-    DashboardView.swift             dashboard window with Dashboard and Agents nav tabs; Agents tab shows compact 5h card + chart + ProjectFoldersPanel and exposes a "Float" button (→ AppDelegate.toggleAgentsPanel); orchestrator sheet hosted here
-    AgentsPanelView.swift           content of the floating NSPanel variant of the Agents tab (compact chart + ProjectFoldersPanel); owns its own orchestrator sheet
-    OrchestratorSheet.swift         modal sheet: folder picker + natural-language prompt; returns (folder, prompt) to caller
-    ProjectFoldersPanel.swift       unified folder list (saved + ad-hoc from session cwds); per-row "+ / split menu" launch button and "wand" orchestrate button; indents live SessionTiles under their folder row
-    SessionTile.swift               per-agent tile w/ collapsed and expanded layouts; ActivitySparkline of per-minute event counts; onFocus → ITermLauncher.focus(cwd:)
+    DashboardView.swift             single-pane dashboard: peak + 5h + chart + weekly + Sessions card; header has Pin / Refresh buttons
+    ProjectFoldersPanel.swift       read-only Sessions panel: groups live sessions by cwd, indents SessionTiles under each folder row
+    SessionTile.swift               per-agent tile w/ collapsed and expanded layouts; ActivitySparkline of per-minute event counts
     SessionVisuals.swift            shared SessionStatusPalette + PulsingDot
     SettingsView.swift              Settings scene body; FloatingWindowConfigurator raises above .statusBar
     TrackerLogo.swift               brand mark + BrandPalette (midnight-blue: sidebar / cardFill / borderSoft / mutedStrong)
 ```
-
-Note: `SessionGrid.swift` has been removed. Session rendering now flows through `ProjectFoldersPanel` (which groups sessions under their folder rows) for both the dashboard card and the pinned notch drawer.
 
 Key invariants to preserve when editing:
 
@@ -103,19 +90,16 @@ Key invariants to preserve when editing:
 - `GlobalHotkey` must unregister its Carbon handler on deinit; Carbon event handlers leak otherwise.
 - `SessionHistoryIngestion` is pure — every poll produces a brand-new `SessionHistory` value via `update(_:with:at:)`. Do not mutate the stored value in place. Activity buckets roll forward minute-by-minute; if more than `bucketCount` minutes elapse the buffer is reset to zeros (intentional, not data loss).
 - `UsageViewModel` auto-expands a tile for `Self.autoExpandDuration` (8s) the first time it sees a session transition into `awaitingInput`. The user clicking the tile clears that auto-expand window. Don't extend the duration without thinking about it — the point is to surface the new "needs input" state without permanently expanding it.
-- `ITermLauncher`'s per-folder window-id cache is a **soft** cache. If AppleScript reports the cached window no longer exists, the launcher transparently falls back to spawning a new full-screen window and updating the cache. Don't turn that fallback into an error.
-- The launcher's default command for the "+/split" buttons is `csp`. The orchestrator path instead passes a fully-built `claude --dangerously-skip-permissions --model <flag> '<prompt>'` command per action. If you generalize this, keep the AppleScript quoting in `appleScriptQuoted`/`shellQuoted` — both layers of escaping are required.
-- `ITermLauncher.openNewWindow` detects whether iTerm was already running and, when it wasn't, reuses iTerm's auto-created startup window instead of calling `create window`. Removing this check spawns an empty ghost window next to the real one.
-- `ITermLauncher` caches per-folder iTerm session `unique id`s (cap 8, LRU) so `focus(cwd:)` can jump back to a specific tab later. If none of the cached UIDs match a live session the entry is purged — treat that as "nothing to focus," not an error. Do not try to re-derive cwd via lsof / proc_pidinfo / iTerm's `session.path`; all three are either sandbox-restricted or unreliable.
-- `OrchestratorClient` sends a Haiku request with `anthropic-beta: oauth-2025-04-20`, `anthropic-version: 2023-06-01`, and `User-Agent: claude-code/<version>` — the same OAuth-required header triple as `ClaudeUsageClient`. The system prompt forces JSON-only output; the parser strips accidental ```json fences before decoding. HTTP 401/403 maps to `OrchestratorError.unauthorized`.
 - `UsageViewModel.refreshOnce` passes `lastLoadedSnapshot` to `ClaudeUsageClient.fetchSnapshot(preservingUsageFrom:)` so a 429/439 response with missing utilization headers preserves the last known percentage instead of flickering to 0. It also no longer drops to `.loading` once a snapshot has loaded — the view keeps rendering the last value while a refresh is in flight.
-- `AppDelegate` keeps both the dashboard window and the Agents `NSPanel`. Only when *both* are closed does it drop back to `.accessory` activation policy — `updateActivationPolicy()` is the single place that decision lives.
+- The dashboard's **Pin** button flips the hosting window between `.normal` and `.floating` level via `AppDelegate.applyPinnedBehavior(to:)`. The pinned state persists to UserDefaults (`TrackMeta.dashboardPinned`). There is no separate floating panel — the dashboard itself is the float target.
+- `AppDelegate.updateActivationPolicy()` drops back to `.accessory` whenever the dashboard window is not visible. It is the single place that decision lives.
+- TrackMeta is strictly a read-only session viewer. Do not reintroduce iTerm launching, orchestration, or session-spawning flows — session lifecycle belongs to the user's IDE.
 
 ## Things that are easy to get wrong
 
 - The project has a doubly-nested layout: repo root contains `TrackMeta/` which contains both the `.xcodeproj` and the source `TrackMeta/` group. Paths in build commands must reflect this.
 - Do not add the App Sandbox's default restrictions back — outbound HTTPS to `api.anthropic.com` must work.
 - The Keychain service string `"Claude Code-credentials"` is literal (with space and capital C) — it's what the Claude Code CLI writes. Don't "fix" the spacing.
-- UserDefaults keys `usageHistory.v1`, `TrackMeta.sessionsPinned`, `TrackMeta.sessionsPinnedCollapsed`, and `TrackMeta.orchestratorFolders` are persistence contracts. Renaming any of them wipes user state on upgrade.
-- `TrackMeta.entitlements` carries four sandbox-relaxations that must stay together: `com.apple.security.network.client` (Anthropic + localhost), `com.apple.security.automation.apple-events` + the `com.googlecode.iterm2` temporary-exception (iTerm launcher), and `com.apple.security.files.user-selected.read-only` (the Launch-agent NSOpenPanel). Removing any of these silently breaks a feature.
+- UserDefaults keys `usageHistory.v1`, `TrackMeta.sessionsPinned`, `TrackMeta.sessionsPinnedCollapsed`, and `TrackMeta.dashboardPinned` are persistence contracts. Renaming any of them wipes user state on upgrade.
+- `TrackMeta.entitlements` only needs `com.apple.security.app-sandbox` + `com.apple.security.network.client`. Do not re-add Apple Events / iTerm / user-selected-files entitlements — they were dropped when the iTerm launcher was removed.
 - The notch-pill tap action calls `openDashboard()` (always show), not `toggleDashboard()` — toggling caused the dashboard to close on the same click that re-focused it. The status-bar icon click still toggles.

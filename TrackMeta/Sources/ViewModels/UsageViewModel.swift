@@ -19,13 +19,10 @@ final class UsageViewModel {
     }
     private static let pinnedKey = "TrackMeta.sessionsPinned"
     private static let pinnedCollapsedKey = "TrackMeta.sessionsPinnedCollapsed"
-    private(set) var orchestratorFolders: [URL] = []
-    private let foldersStore: OrchestratorFoldersStore
 
     struct UnifiedFolderGroup: Identifiable {
         let id: String          // absolute folder path
         let folderURL: URL
-        let isStored: Bool      // present in orchestratorFolders
         let sessions: [ClaudeSession]
         var displayName: String { folderURL.lastPathComponent }
     }
@@ -38,56 +35,38 @@ final class UsageViewModel {
     private var lastLoadedSnapshot: UsageSnapshot?
 
     init(client: ClaudeUsageClient = ClaudeUsageClient(),
-         store: UsageHistoryStore = UsageHistoryStore(),
-         foldersStore: OrchestratorFoldersStore = OrchestratorFoldersStore()) {
+         store: UsageHistoryStore = UsageHistoryStore()) {
         self.client = client
         self.store = store
-        self.foldersStore = foldersStore
         self.history = store.load(asOf: Date())
         self.sessionsPinned = UserDefaults.standard.bool(forKey: Self.pinnedKey)
         self.sessionsPinnedCollapsed = UserDefaults.standard.bool(forKey: Self.pinnedCollapsedKey)
-        self.orchestratorFolders = foldersStore.load()
         startAutoRefresh()
         startSessionPolling()
     }
 
+    /// Groups live sessions by their working directory. A session without a cwd
+    /// is dropped from the grouped view.
     var unifiedFolderGroups: [UnifiedFolderGroup] {
         let sorted = sessions.sorted {
             let lr = sessionStatusRank($0.status), rr = sessionStatusRank($1.status)
             return lr != rr ? lr < rr : $0.sessionId < $1.sessionId
         }
-        var result: [UnifiedFolderGroup] = []
-        var handledIds = Set<String>()
-
-        for folder in orchestratorFolders {
-            let std = folder.standardizedFileURL
-            let folderPath = std.path
-            let matching = sorted.filter { session in
-                guard let cwd = session.cwd else { return false }
-                let p = URL(fileURLWithPath: cwd).standardizedFileURL.path
-                return p == folderPath || p.hasPrefix(folderPath + "/")
-            }
-            result.append(UnifiedFolderGroup(id: folderPath, folderURL: std, isStored: true, sessions: matching))
-            handledIds.formUnion(matching.map(\.sessionId))
-        }
-
-        var adHocOrder: [String] = []
-        var adHocBuckets: [String: [ClaudeSession]] = [:]
-        for session in sorted where !handledIds.contains(session.sessionId) {
+        var order: [String] = []
+        var buckets: [String: [ClaudeSession]] = [:]
+        for session in sorted {
             guard let cwd = session.cwd else { continue }
             let key = URL(fileURLWithPath: cwd).standardizedFileURL.path
-            if adHocBuckets[key] == nil { adHocOrder.append(key) }
-            adHocBuckets[key, default: []].append(session)
+            if buckets[key] == nil { order.append(key) }
+            buckets[key, default: []].append(session)
         }
-        for path in adHocOrder {
-            result.append(UnifiedFolderGroup(
+        return order.map { path in
+            UnifiedFolderGroup(
                 id: path,
                 folderURL: URL(fileURLWithPath: path),
-                isStored: false,
-                sessions: adHocBuckets[path] ?? []
-            ))
+                sessions: buckets[path] ?? []
+            )
         }
-        return result
     }
 
     private func sessionStatusRank(_ status: ClaudeSession.Status) -> Int {
@@ -96,19 +75,6 @@ final class UsageViewModel {
         case .working:       return 1
         case .idle:          return 2
         }
-    }
-
-    func addOrchestratorFolder(_ url: URL) {
-        let standardized = url.standardizedFileURL
-        guard !orchestratorFolders.contains(where: { $0.standardizedFileURL == standardized }) else { return }
-        orchestratorFolders = orchestratorFolders + [standardized]
-        foldersStore.save(orchestratorFolders)
-    }
-
-    func removeOrchestratorFolder(_ url: URL) {
-        let standardized = url.standardizedFileURL
-        orchestratorFolders = orchestratorFolders.filter { $0.standardizedFileURL != standardized }
-        foldersStore.save(orchestratorFolders)
     }
 
     deinit {

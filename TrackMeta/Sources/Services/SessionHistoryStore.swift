@@ -5,7 +5,7 @@ import Foundation
 /// a short activity log without the server needing to keep one.
 struct SessionEvent: Equatable, Identifiable {
     enum Kind: Equatable {
-        case toolChanged(String)
+        case toolChanged(String, String?)
         case summaryChanged(String)
         case statusChanged(ClaudeSession.Status)
     }
@@ -31,6 +31,7 @@ struct SessionHistory: Equatable {
     let bucketAnchor: Date
     /// Snapshot of last-observed fields, for change detection.
     let lastTool: String?
+    let lastToolTarget: String?
     let lastSummary: String?
     let lastStatus: ClaudeSession.Status
 
@@ -57,6 +58,7 @@ enum SessionHistoryIngestion {
             activityBuckets: Array(repeating: 0, count: SessionHistory.bucketCount),
             bucketAnchor: minuteAnchor(of: now),
             lastTool: session.lastTool,
+            lastToolTarget: session.lastToolTarget,
             lastSummary: session.summary,
             lastStatus: session.status
         )
@@ -69,8 +71,16 @@ enum SessionHistoryIngestion {
                        with session: ClaudeSession,
                        at now: Date) -> SessionHistory {
         var newEvents: [SessionEvent] = []
-        if session.lastTool != history.lastTool, let tool = session.lastTool, !tool.isEmpty {
-            newEvents.append(SessionEvent(id: UUID(), timestamp: now, kind: .toolChanged(tool)))
+        if (session.lastTool != history.lastTool || session.lastToolTarget != history.lastToolTarget),
+           let tool = session.lastTool,
+           !tool.isEmpty {
+            newEvents.append(
+                SessionEvent(
+                    id: UUID(),
+                    timestamp: now,
+                    kind: .toolChanged(tool, session.lastToolTarget)
+                )
+            )
         }
         if session.summary != history.lastSummary, let summary = session.summary, !summary.isEmpty {
             newEvents.append(SessionEvent(id: UUID(), timestamp: now, kind: .summaryChanged(summary)))
@@ -94,6 +104,7 @@ enum SessionHistoryIngestion {
             activityBuckets: rolled.buckets,
             bucketAnchor: rolled.anchor,
             lastTool: session.lastTool,
+            lastToolTarget: session.lastToolTarget,
             lastSummary: session.summary,
             lastStatus: session.status
         )
