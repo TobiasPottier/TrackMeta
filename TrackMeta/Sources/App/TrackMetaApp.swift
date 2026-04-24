@@ -571,11 +571,16 @@ private struct NotchPillView: View {
 }
 
 private struct MiniUsageBar: View {
-    @Environment(\.displayScale) private var displayScale
-
     let percent: Double
     let color: Color
     var stripeProgress: Double? = nil
+
+    // Fixed-point stripe width. Do not derive from displayScale: on a 5h
+    // window the stripe moves ~0.02 physical pixels per second, so snapping
+    // to half-point quanta pins it in place for ~60s before it "jumps"
+    // one step — the user perceives that as the stripe being stuck.
+    // Sub-pixel offsets let CoreAnimation alpha-blend the motion smoothly.
+    private let stripeWidth: CGFloat = 1.5
 
     var body: some View {
         GeometryReader { geo in
@@ -590,15 +595,12 @@ private struct MiniUsageBar: View {
                         )
                     )
                 if let stripeProgress {
-                    let scale = max(displayScale, 1)
-                    let stripeWidth: CGFloat = 2 / scale
                     let x = geo.size.width * CGFloat(min(1, max(0, stripeProgress)))
                     let minX = min(max(0, x - stripeWidth / 2), geo.size.width - stripeWidth)
-                    let snappedMinX = (minX * scale).rounded() / scale
                     Rectangle()
                         .fill(Color.white.opacity(0.95))
                         .frame(width: stripeWidth, height: geo.size.height + 2)
-                        .offset(x: snappedMinX, y: 0)
+                        .offset(x: minX, y: 0)
                 }
             }
         }
