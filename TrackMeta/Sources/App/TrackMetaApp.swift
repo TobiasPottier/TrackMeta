@@ -529,46 +529,50 @@ private struct NotchPillView: View {
     let snapshot: UsageSnapshot
     let action: () -> Void
 
-    @State private var now: Date = Date()
-    private let ticker = Timer.publish(every: 30, on: .main, in: .common).autoconnect()
-
     private var bucket: UsageBucket { snapshot.fiveHour }
     private var percent: Double { bucket.percent }
     private var color: Color { usageColor(for: percent) }
-    private var stripeProgress: Double? {
-        bucket.sessionProgress(at: now, windowLength: SessionWindow.fiveHourSeconds)
-    }
 
     var body: some View {
-        Button(action: action) {
-            HStack(spacing: 6) {
-                MiniUsageBar(percent: percent, color: color, stripeProgress: stripeProgress)
+        TimelineView(.periodic(from: .now, by: 1)) { context in
+            Button(action: action) {
+                HStack(spacing: 6) {
+                    MiniUsageBar(
+                        percent: percent,
+                        color: color,
+                        stripeProgress: bucket.sessionProgress(
+                            at: context.date,
+                            windowLength: SessionWindow.fiveHourSeconds
+                        )
+                    )
                     .frame(maxWidth: .infinity, minHeight: 4, maxHeight: 4)
-                Text("\(Int(percent.rounded()))%")
-                    .font(.system(size: 9, weight: .semibold))
-                    .monospacedDigit()
-                    .foregroundStyle(.white)
-                    .fixedSize()
-            }
-            .padding(.horizontal, 4)
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
-            .background(Color.black)
-            .clipShape(
-                UnevenRoundedRectangle(
-                    topLeadingRadius: 0,
-                    bottomLeadingRadius: 5,
-                    bottomTrailingRadius: 5,
-                    topTrailingRadius: 0,
-                    style: .continuous
+                    Text("\(Int(percent.rounded()))%")
+                        .font(.system(size: 9, weight: .semibold))
+                        .monospacedDigit()
+                        .foregroundStyle(.white)
+                        .fixedSize()
+                }
+                .padding(.horizontal, 4)
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                .background(Color.black)
+                .clipShape(
+                    UnevenRoundedRectangle(
+                        topLeadingRadius: 0,
+                        bottomLeadingRadius: 5,
+                        bottomTrailingRadius: 5,
+                        topTrailingRadius: 0,
+                        style: .continuous
+                    )
                 )
-            )
+            }
+            .buttonStyle(.plain)
         }
-        .buttonStyle(.plain)
-        .onReceive(ticker) { now = $0 }
     }
 }
 
 private struct MiniUsageBar: View {
+    @Environment(\.displayScale) private var displayScale
+
     let percent: Double
     let color: Color
     var stripeProgress: Double? = nil
@@ -586,13 +590,15 @@ private struct MiniUsageBar: View {
                         )
                     )
                 if let stripeProgress {
-                    let stripeWidth: CGFloat = 1.5
+                    let scale = max(displayScale, 1)
+                    let stripeWidth: CGFloat = 2 / scale
                     let x = geo.size.width * CGFloat(min(1, max(0, stripeProgress)))
-                    let clampedX = min(max(stripeWidth / 2, x), geo.size.width - stripeWidth / 2)
+                    let minX = min(max(0, x - stripeWidth / 2), geo.size.width - stripeWidth)
+                    let snappedMinX = (minX * scale).rounded() / scale
                     Rectangle()
                         .fill(Color.white.opacity(0.95))
                         .frame(width: stripeWidth, height: geo.size.height + 2)
-                        .offset(x: clampedX - stripeWidth / 2, y: 0)
+                        .offset(x: snappedMinX, y: 0)
                 }
             }
         }

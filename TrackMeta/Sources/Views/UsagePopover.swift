@@ -50,7 +50,7 @@ struct UsageRow: View {
     enum ResetPlacement { case bottom, topCentered }
 
     @State private var now: Date = Date()
-    private let ticker = Timer.publish(every: 30, on: .main, in: .common).autoconnect()
+    private let ticker = Timer.publish(every: 1, on: .main, in: .common).autoconnect()
 
     private var stripeProgress: Double? {
         guard let sessionWindow else { return nil }
@@ -125,7 +125,7 @@ struct PeakHoursIndicator: View {
     private let window = PeakHoursWindow.claudeDefault
 
     @State private var now: Date = Date()
-    private let ticker = Timer.publish(every: 30, on: .main, in: .common).autoconnect()
+    private let ticker = Timer.publish(every: 1, on: .main, in: .common).autoconnect()
 
     private var status: PeakHoursStatus { window.status(at: now) }
 
@@ -236,7 +236,7 @@ struct SessionUsageChart: View {
     let bucket: UsageBucket
 
     @State private var now: Date = Date()
-    private let ticker = Timer.publish(every: 30, on: .main, in: .common).autoconnect()
+    private let ticker = Timer.publish(every: 1, on: .main, in: .common).autoconnect()
 
     private var sessionStart: Date {
         if let resetsAt = bucket.resetsAt {
@@ -247,6 +247,21 @@ struct SessionUsageChart: View {
 
     private var sessionEnd: Date {
         bucket.resetsAt ?? now
+    }
+
+    private var clampedNow: Date {
+        min(max(now, sessionStart), sessionEnd)
+    }
+
+    private var plottedHistory: [UsageSample] {
+        guard let last = history.last else { return history }
+        guard clampedNow > last.timestamp else { return history }
+        return history + [UsageSample(timestamp: clampedNow, fiveHourPercent: last.fiveHourPercent)]
+    }
+
+    private var markerSample: UsageSample? {
+        guard let last = history.last else { return nil }
+        return UsageSample(timestamp: max(last.timestamp, clampedNow), fiveHourPercent: last.fiveHourPercent)
     }
 
     private var hourTicks: [Date] {
@@ -291,7 +306,7 @@ struct SessionUsageChart: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
             Chart {
-                ForEach(history, id: \.timestamp) { sample in
+                ForEach(plottedHistory, id: \.timestamp) { sample in
                     AreaMark(
                         x: .value("Time", sample.timestamp),
                         y: .value("Usage", sample.fiveHourPercent)
@@ -339,19 +354,19 @@ struct SessionUsageChart: View {
                         .lineStyle(StrokeStyle(lineWidth: 0.5, dash: [2, 4]))
                 }
 
-                RuleMark(x: .value("Now", min(max(now, sessionStart), sessionEnd)))
+                RuleMark(x: .value("Now", clampedNow))
                     .foregroundStyle(Color.white.opacity(0.55))
                     .lineStyle(StrokeStyle(lineWidth: 1))
 
-                if let last = history.last {
+                if let markerSample {
                     PointMark(
-                        x: .value("Current", last.timestamp),
-                        y: .value("Usage", last.fiveHourPercent)
+                        x: .value("Current", markerSample.timestamp),
+                        y: .value("Usage", markerSample.fiveHourPercent)
                     )
                     .symbolSize(36)
                     .foregroundStyle(chartColor)
                     .annotation(position: .top, alignment: .center, spacing: 4) {
-                        Text("\(Int(last.fiveHourPercent.rounded()))%")
+                        Text("\(Int(markerSample.fiveHourPercent.rounded()))%")
                             .font(.system(size: 10, weight: .semibold))
                             .monospacedDigit()
                             .foregroundStyle(chartColor)
@@ -390,4 +405,3 @@ struct SessionUsageChart: View {
         )
     }
 }
-

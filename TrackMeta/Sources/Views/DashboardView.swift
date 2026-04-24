@@ -31,9 +31,9 @@ struct DashboardView: View {
             VStack(alignment: .leading, spacing: 20) {
                 header
                 peakCard
+                weeklyCard
                 fiveHourCard
                 chartCard
-                weeklyCard
                 sessionsCard
             }
             .padding(.horizontal, 24)
