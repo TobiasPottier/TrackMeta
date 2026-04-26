@@ -8,9 +8,7 @@ TrackMeta is strictly a read-only viewer: it does not start, control, or spawn C
 
 ## Demo
 
-[![TrackMeta demo — click to play](media/trackmeta-demo-poster.png)](media/trackmeta-demo.mp4)
-
-> 20-second walkthrough at [`media/trackmeta-demo.mp4`](media/trackmeta-demo.mp4) (1280×720, ~250 KB). GitHub renders inline `<video>` only for files dragged into the web editor, so this README uses a click-through poster instead. The clip is built with [Remotion](https://www.remotion.dev/).
+<img width="1920" height="1080" alt="trackmeta-demo" src="https://github.com/user-attachments/assets/01cd951d-7cbb-430d-a208-8c4d1112281d" />
 
 ### Dashboard
 
