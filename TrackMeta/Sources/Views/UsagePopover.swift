@@ -2,6 +2,8 @@ import SwiftUI
 import Combine
 import Charts
 
+// MARK: - Usage cap banner
+
 struct UsageCapBanner: View {
     let snapshot: UsageSnapshot
 
@@ -13,25 +15,35 @@ struct UsageCapBanner: View {
     }
 
     var body: some View {
-        HStack(alignment: .top, spacing: 10) {
-            Image(systemName: "gauge.high")
+        HStack(alignment: .top, spacing: DS.Space.sm) {
+            Image(systemName: "exclamationmark.octagon")
                 .font(.system(size: 13, weight: .semibold))
-                .foregroundStyle(.red)
+                .foregroundStyle(DS.Status.danger)
                 .frame(width: 16)
 
-            VStack(alignment: .leading, spacing: 3) {
+            VStack(alignment: .leading, spacing: 2) {
                 Text("Usage cap reached")
                     .font(.system(size: 12, weight: .semibold))
+                    .foregroundStyle(DS.Text.primary)
                 if let resetText {
                     Text(resetText)
-                        .font(.system(size: 10))
-                        .foregroundStyle(BrandPalette.muted)
+                        .dsType(.bodySm)
+                        .foregroundStyle(DS.Text.muted)
                         .monospacedDigit()
                 }
             }
 
             Spacer(minLength: 0)
         }
+        .padding(DS.Space.sm)
+        .background(
+            RoundedRectangle(cornerRadius: DS.Radius.lg, style: .continuous)
+                .fill(DS.Status.danger.opacity(0.06))
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: DS.Radius.lg, style: .continuous)
+                .stroke(DS.Status.danger.opacity(0.30), lineWidth: 1)
+        )
     }
 
     private static let resetFormatter: DateFormatter = {
@@ -41,13 +53,19 @@ struct UsageCapBanner: View {
     }()
 }
 
+// MARK: - Usage row
+
+enum UsageRowStyle {
+    case hero       // 5-hour gauge — display-size numerals, anchored reset clock
+    case compact    // weekly / sibling — icon + heading + thin bar
+}
+
 struct UsageRow: View {
     let title: String
     let bucket: UsageBucket
     let sessionWindow: TimeInterval?
-    var resetPlacement: ResetPlacement = .bottom
-
-    enum ResetPlacement { case bottom, topCentered }
+    var style: UsageRowStyle = .hero
+    var icon: String = "gauge.with.needle"
 
     @State private var now: Date = Date()
     private let ticker = Timer.publish(every: 1, on: .main, in: .common).autoconnect()
@@ -57,44 +75,124 @@ struct UsageRow: View {
         return bucket.sessionProgress(at: now, windowLength: sessionWindow)
     }
 
-    private var resetText: String? {
-        guard let reset = bucket.resetsAt else { return nil }
-        return "Resets \(Self.resetFormatter.string(from: reset)) · \(Self.timeLeft(until: reset)) left"
-    }
+    private var percent: Double { bucket.percent }
+    private var barColor: Color { usageColor(for: percent) }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            ZStack {
-                if resetPlacement == .topCentered, let text = resetText {
-                    Text(text)
-                        .font(.system(size: 10))
-                        .foregroundStyle(BrandPalette.muted)
-                        .monospacedDigit()
-                }
+        Group {
+            switch style {
+            case .hero:    heroBody
+            case .compact: compactBody
+            }
+        }
+        .onReceive(ticker) { now = $0 }
+    }
 
-                HStack(alignment: .firstTextBaseline) {
-                    Text(title)
-                        .font(.system(size: 12, weight: .medium))
-                    Spacer()
-                    Text("\(Int(bucket.percent.rounded()))%")
-                        .font(.system(size: 12, weight: .semibold))
-                        .monospacedDigit()
-                        .foregroundStyle(color(for: bucket.percent))
+    // MARK: Hero
+    //
+    // Display-size numeral on the left, an editorial "resets in" clock on the
+    // right, with the bar spanning the full width below. The right-hand clock
+    // anchors the empty space the old layout left dangling.
+
+    private var heroBody: some View {
+        VStack(alignment: .leading, spacing: DS.Space.md) {
+            HStack(alignment: .firstTextBaseline) {
+                Text(title)
+                    .dsType(.labelSm)
+                    .foregroundStyle(DS.Text.muted)
+                Spacer()
+                if percent >= 80 {
+                    DSChip(text: percent >= 95 ? "Critical" : "Approaching cap",
+                           tone: percent >= 95 ? .danger : .warning)
                 }
             }
 
-            UsageBar(percent: bucket.percent, color: color(for: bucket.percent), stripeProgress: stripeProgress)
-                .frame(height: 6)
-                .onReceive(ticker) { now = $0 }
+            HStack(alignment: .firstTextBaseline, spacing: 0) {
+                heroNumeral
+                Spacer(minLength: DS.Space.lg)
+                if let reset = bucket.resetsAt {
+                    resetClock(target: reset)
+                }
+            }
 
-            if resetPlacement == .bottom, let text = resetText {
-                Text(text)
-                    .font(.system(size: 10))
-                    .foregroundStyle(BrandPalette.muted)
+            UsageBar(percent: percent,
+                     color: barColor,
+                     stripeProgress: stripeProgress)
+                .frame(height: 6)
+        }
+    }
+
+    private var heroNumeral: some View {
+        HStack(alignment: .lastTextBaseline, spacing: 2) {
+            Text("\(Int(percent.rounded()))")
+                .font(.system(size: 64, weight: .semibold))
+                .tracking(-2.4)
+                .monospacedDigit()
+                .foregroundStyle(DS.Text.primary)
+            Text("%")
+                .font(.system(size: 22, weight: .regular))
+                .tracking(-0.6)
+                .foregroundStyle(DS.Text.muted)
+                .padding(.bottom, 6)
+        }
+    }
+
+    @ViewBuilder
+    private func resetClock(target: Date) -> some View {
+        VStack(alignment: .trailing, spacing: 4) {
+            Text("Resets in")
+                .dsType(.labelSm)
+                .foregroundStyle(DS.Text.muted)
+            Text(Self.timeLeft(until: target, fromDate: now))
+                .font(.system(size: 22, weight: .semibold))
+                .tracking(-0.4)
+                .monospacedDigit()
+                .foregroundStyle(DS.Text.secondary)
+            Text(Self.absoluteResetText(target))
+                .dsType(.bodySm)
+                .foregroundStyle(DS.Text.muted)
+                .monospacedDigit()
+        }
+        .fixedSize(horizontal: true, vertical: false)
+    }
+
+    // MARK: Compact
+
+    private var compactBody: some View {
+        VStack(alignment: .leading, spacing: DS.Space.xs) {
+            HStack(alignment: .center, spacing: DS.Space.sm) {
+                Image(systemName: icon)
+                    .font(.system(size: 14, weight: .regular))
+                    .foregroundStyle(DS.Text.muted)
+                    .frame(width: 18)
+                Text(title)
+                    .font(.system(size: 14, weight: .semibold))
+                    .tracking(-0.1)
+                    .foregroundStyle(DS.Text.primary)
+                Spacer()
+                Text("\(Int(percent.rounded()))%")
+                    .font(.system(size: 14, weight: .semibold))
                     .monospacedDigit()
+                    .foregroundStyle(barColor)
+            }
+
+            UsageBar(percent: percent,
+                     color: barColor,
+                     stripeProgress: stripeProgress)
+                .frame(height: 4)
+                .padding(.leading, 26) // align under text, not icon
+
+            if let reset = bucket.resetsAt {
+                Text(Self.compactResetText(reset, fromDate: now))
+                    .dsType(.bodySm)
+                    .foregroundStyle(DS.Text.muted)
+                    .monospacedDigit()
+                    .padding(.leading, 26)
             }
         }
     }
+
+    // MARK: - Helpers
 
     private static let resetFormatter: DateFormatter = {
         let f = DateFormatter()
@@ -102,24 +200,35 @@ struct UsageRow: View {
         return f
     }()
 
-    private static func timeLeft(until date: Date) -> String {
-        let seconds = Int(date.timeIntervalSinceNow)
+    private static func absoluteResetText(_ date: Date) -> String {
+        "at \(resetFormatter.string(from: date))"
+    }
+
+    private static func compactResetText(_ date: Date, fromDate ref: Date) -> String {
+        "Resets \(resetFormatter.string(from: date)) · \(timeLeft(until: date, fromDate: ref)) left"
+    }
+
+    private static func timeLeft(until date: Date, fromDate ref: Date) -> String {
+        let seconds = Int(date.timeIntervalSince(ref))
         guard seconds > 0 else { return "0m" }
         let h = seconds / 3600
         let m = (seconds % 3600) / 60
         return h > 0 ? "\(h)h \(m)m" : "\(m)m"
     }
-
-    private func color(for percent: Double) -> Color { usageColor(for: percent) }
 }
 
+/// Usage bar color ramp. The Modern Refinement palette restricts chroma — at
+/// healthy levels we render in the soft amber primary, deepening to red only
+/// at the warning threshold so the gauge still communicates urgency.
 func usageColor(for percent: Double) -> Color {
     switch percent {
-    case ..<50: return Color(red: 0.34, green: 0.78, blue: 0.47)
-    case ..<80: return BrandPalette.accent
-    default:    return Color(red: 0.95, green: 0.35, blue: 0.35)
+    case ..<50: return DS.Status.success
+    case ..<80: return DS.Primary.accent
+    default:    return DS.Status.danger
     }
 }
+
+// MARK: - Peak hours indicator
 
 struct PeakHoursIndicator: View {
     private let window = PeakHoursWindow.claudeDefault
@@ -130,36 +239,28 @@ struct PeakHoursIndicator: View {
     private var status: PeakHoursStatus { window.status(at: now) }
 
     var body: some View {
-        HStack(alignment: .top, spacing: 10) {
-            Image(systemName: status.isPeakNow
-                  ? "exclamationmark.triangle.fill"
-                  : "clock")
-                .font(.system(size: 12, weight: .semibold))
-                .foregroundStyle(status.isPeakNow ? .orange : BrandPalette.muted)
-                .frame(width: 14)
+        HStack(alignment: .top, spacing: DS.Space.sm) {
+            Image(systemName: status.isPeakNow ? "wave.3.right" : "moon.stars")
+                .font(.system(size: 14, weight: .regular))
+                .foregroundStyle(status.isPeakNow ? DS.Primary.accent : DS.Text.muted)
+                .frame(width: 18)
+                .padding(.top, 2)
 
-            VStack(alignment: .leading, spacing: 3) {
-                HStack(spacing: 6) {
-                    Text(status.isPeakNow ? "Peak hours — expect tighter limits" : "Off-peak")
-                        .font(.system(size: 12, weight: .semibold))
-                        .foregroundStyle(status.isPeakNow ? .orange : .white)
+            VStack(alignment: .leading, spacing: 4) {
+                HStack(spacing: DS.Space.xs) {
+                    Text(status.isPeakNow ? "Peak hours" : "Off-peak")
+                        .font(.system(size: 14, weight: .semibold))
+                        .tracking(-0.1)
+                        .foregroundStyle(DS.Text.primary)
 
                     if status.isPeakNow {
-                        Text("NOW")
-                            .font(.system(size: 9, weight: .bold))
-                            .tracking(0.6)
-                            .foregroundStyle(.white)
-                            .padding(.horizontal, 5)
-                            .padding(.vertical, 1)
-                            .background(
-                                Capsule().fill(Color.orange)
-                            )
+                        DSChip(text: "Now", tone: .accent)
                     }
                 }
 
                 Text(subtitle)
-                    .font(.system(size: 10))
-                    .foregroundStyle(BrandPalette.muted)
+                    .dsType(.bodySm)
+                    .foregroundStyle(DS.Text.muted)
                     .fixedSize(horizontal: false, vertical: true)
             }
 
@@ -190,6 +291,8 @@ struct PeakHoursIndicator: View {
     }
 }
 
+// MARK: - Usage bar
+
 private struct UsageBar: View {
     let percent: Double
     let color: Color
@@ -199,16 +302,10 @@ private struct UsageBar: View {
         GeometryReader { geo in
             ZStack(alignment: .leading) {
                 Capsule()
-                    .fill(Color.white.opacity(0.08))
+                    .fill(DS.Surface.containerHigh)
 
                 Capsule()
-                    .fill(
-                        LinearGradient(
-                            colors: [color.opacity(0.85), color],
-                            startPoint: .leading,
-                            endPoint: .trailing
-                        )
-                    )
+                    .fill(color)
                     .frame(
                         width: max(
                             geo.size.height,
@@ -217,19 +314,20 @@ private struct UsageBar: View {
                     )
 
                 if let stripeProgress {
-                    let stripeWidth: CGFloat = 2
+                    let stripeWidth: CGFloat = 1.5
                     let x = geo.size.width * CGFloat(min(1, max(0, stripeProgress)))
                     let clampedX = min(max(stripeWidth / 2, x), geo.size.width - stripeWidth / 2)
                     Rectangle()
-                        .fill(Color.white.opacity(0.95))
+                        .fill(DS.Text.primary)
                         .frame(width: stripeWidth, height: geo.size.height + 4)
                         .offset(x: clampedX - stripeWidth / 2, y: 0)
-                        .shadow(color: Color.black.opacity(0.35), radius: 1, x: 0, y: 0)
                 }
             }
         }
     }
 }
+
+// MARK: - Session usage chart
 
 struct SessionUsageChart: View {
     let history: [UsageSample]
@@ -284,27 +382,21 @@ struct SessionUsageChart: View {
         return f
     }()
 
-    @ViewBuilder
-    private func sessionBoundaryLabel(title: String, date: Date) -> some View {
-        HStack(spacing: 4) {
-            Text(title)
-                .font(.system(size: 9, weight: .semibold))
-                .tracking(0.4)
-                .foregroundStyle(Color.white.opacity(0.55))
-            Text(Self.boundaryFormatter.string(from: date))
-                .font(.system(size: 10, weight: .medium))
-                .monospacedDigit()
-                .foregroundStyle(Color.white.opacity(0.85))
-        }
-        .padding(.horizontal, 5)
-        .padding(.vertical, 1)
-        .background(
-            Capsule().fill(Color.black.opacity(0.3))
-        )
-    }
-
     var body: some View {
-        VStack(alignment: .leading, spacing: 6) {
+        VStack(alignment: .leading, spacing: DS.Space.sm) {
+            HStack(alignment: .firstTextBaseline) {
+                Text("Session pace")
+                    .dsType(.labelSm)
+                    .foregroundStyle(DS.Text.muted)
+                Spacer()
+                if let last = history.last {
+                    Text("\(Int(last.fiveHourPercent.rounded()))% used")
+                        .dsType(.bodySm)
+                        .foregroundStyle(DS.Text.secondary)
+                        .monospacedDigit()
+                }
+            }
+
             Chart {
                 ForEach(plottedHistory, id: \.timestamp) { sample in
                     AreaMark(
@@ -313,7 +405,7 @@ struct SessionUsageChart: View {
                     )
                     .foregroundStyle(
                         LinearGradient(
-                            colors: [chartColor.opacity(0.35), chartColor.opacity(0.0)],
+                            colors: [chartColor.opacity(0.22), chartColor.opacity(0.0)],
                             startPoint: .top,
                             endPoint: .bottom
                         )
@@ -334,28 +426,25 @@ struct SessionUsageChart: View {
                     y: .value("Pace", 0),
                     series: .value("Series", "pace")
                 )
-                .foregroundStyle(Color.white.opacity(0.25))
-                .lineStyle(StrokeStyle(lineWidth: 1, dash: [3, 3]))
+                .foregroundStyle(DS.Outline.soft.opacity(0.55))
+                .lineStyle(StrokeStyle(lineWidth: 1, dash: [3, 4]))
 
                 LineMark(
                     x: .value("Time", sessionEnd),
                     y: .value("Pace", 100),
                     series: .value("Series", "pace")
                 )
-                .foregroundStyle(Color.white.opacity(0.25))
-                .lineStyle(StrokeStyle(lineWidth: 1, dash: [3, 3]))
-                .annotation(position: .topLeading, alignment: .trailing, spacing: 2) {
-                    sessionBoundaryLabel(title: "End", date: sessionEnd)
-                }
+                .foregroundStyle(DS.Outline.soft.opacity(0.55))
+                .lineStyle(StrokeStyle(lineWidth: 1, dash: [3, 4]))
 
                 ForEach(hourTicks, id: \.self) { tick in
                     RuleMark(x: .value("Hour", tick))
-                        .foregroundStyle(Color.white.opacity(0.12))
-                        .lineStyle(StrokeStyle(lineWidth: 0.5, dash: [2, 4]))
+                        .foregroundStyle(DS.Outline.soft.opacity(0.18))
+                        .lineStyle(StrokeStyle(lineWidth: 0.5))
                 }
 
                 RuleMark(x: .value("Now", clampedNow))
-                    .foregroundStyle(Color.white.opacity(0.55))
+                    .foregroundStyle(DS.Text.secondary.opacity(0.55))
                     .lineStyle(StrokeStyle(lineWidth: 1))
 
                 if let markerSample {
@@ -363,22 +452,8 @@ struct SessionUsageChart: View {
                         x: .value("Current", markerSample.timestamp),
                         y: .value("Usage", markerSample.fiveHourPercent)
                     )
-                    .symbolSize(36)
+                    .symbolSize(34)
                     .foregroundStyle(chartColor)
-                    .annotation(position: .top, alignment: .center, spacing: 4) {
-                        Text("\(Int(markerSample.fiveHourPercent.rounded()))%")
-                            .font(.system(size: 10, weight: .semibold))
-                            .monospacedDigit()
-                            .foregroundStyle(chartColor)
-                            .padding(.horizontal, 5)
-                            .padding(.vertical, 1)
-                            .background(
-                                Capsule().fill(Color.black.opacity(0.35))
-                            )
-                            .overlay(
-                                Capsule().stroke(chartColor.opacity(0.5), lineWidth: 0.5)
-                            )
-                    }
                 }
             }
             .chartXScale(domain: sessionStart...sessionEnd)
@@ -386,22 +461,14 @@ struct SessionUsageChart: View {
             .chartYAxis(.hidden)
             .chartXAxis {
                 AxisMarks(preset: .aligned, values: hourTicks) { _ in
-                    AxisValueLabel(format: .dateTime.hour(.defaultDigits(amPM: .omitted)).minute(), collisionResolution: .disabled)
+                    AxisValueLabel(format: .dateTime.hour(.defaultDigits(amPM: .omitted)).minute(),
+                                   collisionResolution: .disabled)
                         .font(.system(size: 9, weight: .medium).monospacedDigit())
-                        .foregroundStyle(Color.white.opacity(0.40))
+                        .foregroundStyle(DS.Text.muted.opacity(0.7))
                 }
             }
             .frame(height: 180)
             .onReceive(ticker) { now = $0 }
         }
-        .padding(12)
-        .background(
-            RoundedRectangle(cornerRadius: 10, style: .continuous)
-                .fill(Color.white.opacity(0.04))
-        )
-        .overlay(
-            RoundedRectangle(cornerRadius: 10, style: .continuous)
-                .stroke(BrandPalette.border, lineWidth: 1)
-        )
     }
 }

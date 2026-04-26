@@ -1,10 +1,8 @@
 import SwiftUI
 
-/// A single agent tile for the session overview. Has two layouts:
-/// - Collapsed (68pt) for glanceable per-agent status.
-/// - Expanded (~200pt) for the full prompt / recent events / actions.
-/// A compact variant is used in the pinned notch drawer so more agents fit
-/// in limited vertical space.
+/// One agent tile. Outline-only by default; the only fill is a 6% amber wash
+/// when a session is awaiting input, so the eye lands on it without the rest
+/// of the grid lighting up. Idle / working tiles read as quiet metadata.
 struct SessionTile: View {
     let session: ClaudeSession
     let history: SessionHistory?
@@ -14,22 +12,24 @@ struct SessionTile: View {
     var onDismiss: (() -> Void)? = nil
 
     @State private var now: Date = Date()
-    @State private var displayedAction: String = ""
-    @State private var actionVersion: Int = 0
+    @State private var hovering: Bool = false
     private let ticker = Timer.publish(every: 1, on: .main, in: .common).autoconnect()
 
     enum Variant {
-        case standard   // dashboard grid
-        case compact    // pinned notch drawer
+        case standard
+        case compact
     }
 
+    private var isCompact: Bool { variant == .compact }
+    private var radius: CGFloat { isCompact ? DS.Radius.md : DS.Radius.lg }
+
     var body: some View {
-        VStack(alignment: .leading, spacing: variant == .compact ? 4 : 6) {
+        VStack(alignment: .leading, spacing: isCompact ? 6 : DS.Space.xs) {
             headerRow
-            if variant != .compact || isExpanded {
+            if !isCompact || isExpanded {
                 eventLine
             }
-            if variant == .standard {
+            if !isCompact {
                 activityRow
             }
             if isExpanded {
@@ -37,82 +37,54 @@ struct SessionTile: View {
                     .transition(.opacity.combined(with: .move(edge: .top)))
             }
         }
-        .padding(.horizontal, variant == .compact ? 10 : 12)
-        .padding(.vertical, variant == .compact ? 8 : 10)
+        .padding(.horizontal, isCompact ? DS.Space.sm : DS.Space.sm)
+        .padding(.vertical, isCompact ? DS.Space.xs : DS.Space.sm)
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(
-            RoundedRectangle(cornerRadius: variant == .compact ? 10 : 12, style: .continuous)
+            RoundedRectangle(cornerRadius: radius, style: .continuous)
                 .fill(background)
         )
         .overlay(
-            RoundedRectangle(cornerRadius: variant == .compact ? 10 : 12, style: .continuous)
+            RoundedRectangle(cornerRadius: radius, style: .continuous)
                 .stroke(border, lineWidth: 1)
         )
-        .contentShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
-        .onTapGesture {
-            onToggleExpand?()
-        }
-        .onAppear { displayedAction = currentAction }
-        .onChange(of: currentAction) { _, newValue in
-            withAnimation(.easeOut(duration: 0.28)) {
-                displayedAction = newValue
-                actionVersion += 1
-            }
-        }
+        .contentShape(RoundedRectangle(cornerRadius: radius, style: .continuous))
+        .onHover { hovering = $0 }
+        .onTapGesture { onToggleExpand?() }
         .onReceive(ticker) { now = $0 }
         .animation(.easeInOut(duration: 0.18), value: isExpanded)
+        .animation(.easeOut(duration: 0.16), value: hovering)
     }
 
     // MARK: - Rows
 
     private var headerRow: some View {
-        HStack(spacing: 8) {
+        HStack(spacing: DS.Space.xs) {
             statusDot
             Text(titleText)
-                .font(.system(size: variant == .compact ? 11 : 12, weight: .semibold))
-                .foregroundStyle(.white)
+                .font(.system(size: isCompact ? 11 : 13, weight: .semibold))
+                .tracking(-0.1)
+                .foregroundStyle(DS.Text.primary)
                 .lineLimit(1)
                 .truncationMode(.tail)
                 .layoutPriority(1)
             Spacer(minLength: 4)
             Text(elapsedLabel)
-                .font(.system(size: 10, weight: .medium).monospacedDigit())
-                .foregroundStyle(BrandPalette.muted)
-            actionIcon
+                .dsType(.bodySm)
+                .monospacedDigit()
+                .foregroundStyle(DS.Text.muted)
             if isExpanded, onToggleExpand != nil {
                 Image(systemName: "chevron.up")
                     .font(.system(size: 9, weight: .semibold))
-                    .foregroundStyle(BrandPalette.muted)
+                    .foregroundStyle(DS.Text.muted)
             }
-        }
-    }
-
-    private var rollingActionLabel: some View {
-        HStack(spacing: 3) {
-            Text("·")
-                .font(.system(size: 9))
-                .foregroundStyle(BrandPalette.muted.opacity(0.4))
-            ZStack {
-                actionText(displayedAction, target: session.lastToolTarget)
-                    .font(.system(size: 10))
-                    .foregroundStyle(BrandPalette.muted)
-                    .lineLimit(1)
-                    .truncationMode(.tail)
-                    .id(actionVersion)
-                    .transition(.asymmetric(
-                        insertion: .push(from: .bottom),
-                        removal: .push(from: .top)
-                    ))
-            }
-            .frame(maxWidth: 120, alignment: .leading)
-            .clipped()
         }
     }
 
     private var eventLine: some View {
         eventLineContent
-            .font(.system(size: 10))
-            .foregroundStyle(BrandPalette.muted)
+            .dsType(.bodySm)
+            .foregroundStyle(DS.Text.muted)
             .lineLimit(1)
             .truncationMode(.tail)
             .frame(maxWidth: .infinity, alignment: .leading)
@@ -134,11 +106,13 @@ struct SessionTile: View {
            Self.fileTools.contains(action) {
             let file = URL(fileURLWithPath: target).lastPathComponent
             if !file.isEmpty {
-                return Text(action) + Text(" ") + Text(file).bold().foregroundColor(.white)
+                return Text(action) + Text(" ")
+                    + Text(file).bold().foregroundColor(DS.Text.primary)
             }
         }
         if let file = parsed.fileName {
-            return Text(parsed.action) + Text(" ") + Text(file).bold().foregroundColor(.white)
+            return Text(parsed.action) + Text(" ")
+                + Text(file).bold().foregroundColor(DS.Text.primary)
         }
         return Text(action)
     }
@@ -192,7 +166,7 @@ struct SessionTile: View {
     }
 
     private var activityRow: some View {
-        HStack(spacing: 6) {
+        HStack(spacing: DS.Space.xs) {
             ActivitySparkline(buckets: history?.activityBuckets ?? [], color: statusColor)
                 .frame(height: 10)
             Spacer(minLength: 0)
@@ -205,45 +179,35 @@ struct SessionTile: View {
 
     private func contextBadge(_ pct: Double) -> some View {
         let clamped = min(max(pct, 0), 100)
-        let color: Color = clamped >= 90 ? .red
-                         : clamped >= 70 ? .orange
-                         : BrandPalette.muted
-        return HStack(spacing: 3) {
-            Image(systemName: "doc.text")
-                .font(.system(size: 8))
-                .foregroundStyle(color)
-            Text("\(Int(clamped))%")
-                .font(.system(size: 9, weight: .semibold).monospacedDigit())
-                .foregroundStyle(color)
-        }
+        let tone: DSChip.Tone = clamped >= 90 ? .danger
+                              : clamped >= 70 ? .warning
+                              : .neutral
+        return DSChip(text: "\(Int(clamped))% ctx", tone: tone)
     }
 
     @ViewBuilder private var expandedDetail: some View {
         Divider()
-            .overlay(Color.white.opacity(0.08))
+            .overlay(DS.Outline.soft.opacity(0.5))
             .padding(.vertical, 2)
 
         if let cwd = session.cwd {
-            Label {
-                Text(cwd)
-                    .font(.system(size: 10).monospaced())
-                    .foregroundStyle(BrandPalette.muted)
-                    .lineLimit(1)
-                    .truncationMode(.middle)
-            } icon: {
+            HStack(spacing: 6) {
                 Image(systemName: "folder")
                     .font(.system(size: 9))
-                    .foregroundStyle(BrandPalette.muted)
+                    .foregroundStyle(DS.Text.muted)
+                Text(cwd)
+                    .dsType(.mono)
+                    .foregroundStyle(DS.Text.muted)
+                    .lineLimit(1)
+                    .truncationMode(.middle)
             }
         }
 
         if let events = history?.events, !events.isEmpty {
-            VStack(alignment: .leading, spacing: 3) {
+            VStack(alignment: .leading, spacing: 4) {
                 Text("Recent")
-                    .font(.system(size: 9, weight: .semibold))
-                    .tracking(0.4)
-                    .textCase(.uppercase)
-                    .foregroundStyle(BrandPalette.muted.opacity(0.8))
+                    .dsType(.labelSm)
+                    .foregroundStyle(DS.Text.muted)
                     .padding(.top, 4)
                 ForEach(events.reversed().prefix(4)) { event in
                     eventRow(event)
@@ -254,17 +218,9 @@ struct SessionTile: View {
         HStack(spacing: 6) {
             Spacer()
             if let onDismiss {
-                Button(action: onDismiss) {
-                    Text("Dismiss")
-                        .font(.system(size: 10, weight: .semibold))
-                        .foregroundStyle(.white.opacity(0.75))
-                        .padding(.horizontal, 8)
-                        .padding(.vertical, 4)
-                        .background(
-                            Capsule().fill(Color.white.opacity(0.08))
-                        )
-                }
-                .buttonStyle(.plain)
+                Button("Dismiss", action: onDismiss)
+                    .buttonStyle(DSGhostButtonStyle())
+                    .controlSize(.small)
             }
         }
         .padding(.top, 4)
@@ -274,17 +230,17 @@ struct SessionTile: View {
         HStack(alignment: .firstTextBaseline, spacing: 6) {
             Image(systemName: eventIcon(event.kind))
                 .font(.system(size: 9))
-                .foregroundStyle(BrandPalette.muted)
+                .foregroundStyle(DS.Text.muted)
                 .frame(width: 12)
             eventText(event.kind)
-                .font(.system(size: 10))
-                .foregroundStyle(.white.opacity(0.85))
+                .dsType(.bodySm)
+                .foregroundStyle(DS.Text.secondary)
                 .lineLimit(1)
                 .truncationMode(.tail)
             Spacer(minLength: 4)
             Text(relative(event.timestamp))
-                .font(.system(size: 9).monospacedDigit())
-                .foregroundStyle(BrandPalette.muted.opacity(0.7))
+                .font(.system(size: 9, weight: .regular).monospacedDigit())
+                .foregroundStyle(DS.Text.muted.opacity(0.8))
         }
     }
 
@@ -293,35 +249,28 @@ struct SessionTile: View {
     @ViewBuilder private var statusDot: some View {
         switch session.status {
         case .working, .awaitingInput:
-            PulsingDot(color: statusColor, size: variant == .compact ? 6 : 7)
+            PulsingDot(color: statusColor, size: isCompact ? 6 : 7)
         case .idle:
             Circle()
-                .fill(statusColor)
-                .frame(width: variant == .compact ? 6 : 7,
-                       height: variant == .compact ? 6 : 7)
-                .frame(width: 13, height: 13)
+                .stroke(statusColor.opacity(0.6), lineWidth: 1)
+                .frame(width: isCompact ? 6 : 7, height: isCompact ? 6 : 7)
+                .frame(width: 14, height: 14)
         }
     }
 
-    @ViewBuilder private var actionIcon: some View {
-        Image(systemName: actionSymbol)
-            .font(.system(size: 10, weight: .semibold))
-            .foregroundStyle(statusColor)
-            .frame(width: 14)
+    private var statusTag: some View {
+        DSChip(text: statusTagLabel, tone: statusTagTone)
     }
 
-    private var statusTag: some View {
-        Text(statusTagLabel)
-            .font(.system(size: 9, weight: .semibold))
-            .tracking(0.4)
-            .foregroundStyle(statusColor)
+    private var statusTagTone: DSChip.Tone {
+        switch session.status {
+        case .working:        return .success
+        case .awaitingInput:  return .accent
+        case .idle:           return .neutral
+        }
     }
 
     // MARK: - Derived
-
-    private var currentAction: String {
-        session.lastTool ?? ""
-    }
 
     private var titleText: String {
         if let summary = session.summary, !summary.isEmpty { return summary }
@@ -334,37 +283,36 @@ struct SessionTile: View {
         return formatElapsed(history.elapsed(now: now))
     }
 
-    private var actionSymbol: String {
-        switch session.status {
-        case .working:        return "arrow.triangle.2.circlepath"
-        case .awaitingInput:  return "keyboard"
-        case .idle:           return "pause.circle"
-        }
-    }
-
     private var statusTagLabel: String {
         switch session.status {
-        case .working:        return "WORKING"
-        case .awaitingInput:  return "NEEDS INPUT"
-        case .idle:           return "IDLE"
+        case .working:        return "Working"
+        case .awaitingInput:  return "Needs input"
+        case .idle:           return "Idle"
         }
     }
 
     private var statusColor: Color { SessionStatusPalette.color(for: session.status) }
 
+    /// Backgrounds are tonal-only — no chromatic fills except the amber wash
+    /// for "needs input", which is the single state we actively want the eye
+    /// to find.
     private var background: Color {
         switch session.status {
-        case .working:       return statusColor.opacity(0.07)
-        case .awaitingInput: return statusColor.opacity(0.10)
-        case .idle:          return Color.white.opacity(0.04)
+        case .working:       return Color.clear
+        case .awaitingInput: return DS.Primary.accent.opacity(0.06)
+        case .idle:          return Color.clear
         }
     }
 
     private var border: Color {
+        let hoverBoost = hovering ? 0.4 : 0.0
         switch session.status {
-        case .working:       return statusColor.opacity(0.25)
-        case .awaitingInput: return statusColor.opacity(0.36)
-        case .idle:          return BrandPalette.border
+        case .working:
+            return DS.Outline.soft.opacity(0.55 + hoverBoost)
+        case .awaitingInput:
+            return DS.Primary.accent.opacity(0.45 + hoverBoost * 0.5)
+        case .idle:
+            return DS.Outline.soft.opacity(0.4 + hoverBoost)
         }
     }
 
@@ -416,8 +364,9 @@ struct SessionTile: View {
     }
 }
 
-/// Thin bar chart of per-minute event counts. Flat line when a session has
-/// been idle; tall bars when it's been firing off tool calls.
+/// Per-minute event sparkline — capsule bars to match the "soft" shape
+/// language. Empty buckets render as faint outline marks rather than filled
+/// stubs so the line stays quiet.
 struct ActivitySparkline: View {
     let buckets: [Int]
     let color: Color
@@ -431,7 +380,7 @@ struct ActivitySparkline: View {
             HStack(alignment: .bottom, spacing: spacing) {
                 ForEach(Array(buckets.enumerated()), id: \.offset) { _, value in
                     Capsule(style: .continuous)
-                        .fill(value > 0 ? color.opacity(0.85) : Color.white.opacity(0.10))
+                        .fill(value > 0 ? color.opacity(0.85) : DS.Outline.soft.opacity(0.4))
                         .frame(
                             width: barWidth,
                             height: max(1, geo.size.height * CGFloat(value) / CGFloat(maxValue))

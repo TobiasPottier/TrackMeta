@@ -5,66 +5,51 @@ struct SettingsView: View {
     @Bindable var model: UsageViewModel
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 20) {
+        VStack(alignment: .leading, spacing: DS.Space.lg) {
             header
 
-            card(title: "Status", icon: "dot.radiowaves.left.and.right") {
-                VStack(alignment: .leading, spacing: 10) {
+            section(label: "Status") {
+                VStack(alignment: .leading, spacing: DS.Space.sm) {
                     statusText
                     Button {
                         model.refresh()
                     } label: {
                         Label("Reload now", systemImage: "arrow.clockwise")
-                            .font(.system(size: 12, weight: .semibold))
-                            .padding(.horizontal, 12)
-                            .padding(.vertical, 7)
-                            .background(
-                                RoundedRectangle(cornerRadius: 8, style: .continuous)
-                                    .fill(BrandPalette.accent)
-                            )
-                            .foregroundStyle(.white)
                     }
-                    .buttonStyle(.plain)
+                    .buttonStyle(DSPrimaryButtonStyle())
                     .keyboardShortcut(.defaultAction)
                 }
             }
 
-            card(title: "How it works", icon: "questionmark.circle") {
+            section(label: "How it works") {
                 VStack(alignment: .leading, spacing: 8) {
                     Text("TrackMeta reads the OAuth token saved by the Claude Code CLI (Keychain item “Claude Code-credentials”) and asks Anthropic for your current rate-limit usage.")
                     Text("If credentials are missing: open Terminal, run `claude`, and log in. Then click Reload.")
                 }
-                .font(.system(size: 11))
-                .foregroundStyle(BrandPalette.muted)
+                .dsType(.bodySm)
+                .foregroundStyle(DS.Text.muted)
                 .fixedSize(horizontal: false, vertical: true)
             }
 
             Spacer(minLength: 0)
         }
-        .padding(22)
+        .padding(DS.Space.lg)
         .frame(width: 480, height: 360)
-        .background(
-            LinearGradient(
-                colors: [BrandPalette.panelTop, BrandPalette.panelBottom],
-                startPoint: .top,
-                endPoint: .bottom
-            )
-            .ignoresSafeArea()
-        )
+        .background(DS.Surface.base.ignoresSafeArea())
         .background(FloatingWindowConfigurator())
-        .foregroundStyle(.white)
+        .foregroundStyle(DS.Text.primary)
     }
 
     private var header: some View {
-        HStack(spacing: 12) {
-            TrackerLogo(size: 34)
-            VStack(alignment: .leading, spacing: 2) {
-                Text("TrackMeta")
-                    .font(.system(size: 18, weight: .semibold))
-                    .tracking(-0.3)
+        HStack(spacing: DS.Space.sm) {
+            TrackerLogo(size: 32)
+            VStack(alignment: .leading, spacing: 0) {
                 Text("Settings")
-                    .font(.system(size: 12))
-                    .foregroundStyle(BrandPalette.muted)
+                    .dsType(.labelSm)
+                    .foregroundStyle(DS.Text.muted)
+                Text("TrackMeta")
+                    .dsType(.headlineMd)
+                    .foregroundStyle(DS.Text.primary)
             }
             Spacer()
         }
@@ -73,20 +58,29 @@ struct SettingsView: View {
     @ViewBuilder private var statusText: some View {
         switch model.state {
         case .idle, .loading:
-            Label("Loading…", systemImage: "clock")
-                .font(.system(size: 12))
-                .foregroundStyle(BrandPalette.muted)
+            HStack(spacing: 8) {
+                ProgressView().controlSize(.small)
+                Text("Loading…")
+                    .dsType(.bodyMd)
+                    .foregroundStyle(DS.Text.muted)
+            }
         case .loaded(let snap):
-            Label(statusMessage(for: snap),
-                  systemImage: snap.isUsageCapReached ? "gauge.high" : "checkmark.circle.fill")
-                .font(.system(size: 12))
-                .foregroundStyle(snap.isUsageCapReached
-                                 ? Color(red: 0.95, green: 0.35, blue: 0.35)
-                                 : Color(red: 0.34, green: 0.78, blue: 0.47))
+            HStack(spacing: 8) {
+                Circle()
+                    .fill(snap.isUsageCapReached ? DS.Status.danger : DS.Status.success)
+                    .frame(width: 6, height: 6)
+                Text(statusMessage(for: snap))
+                    .dsType(.bodyMd)
+                    .foregroundStyle(DS.Text.primary)
+            }
         case .failed(let message):
-            Label(message, systemImage: "exclamationmark.triangle.fill")
-                .font(.system(size: 12))
-                .foregroundStyle(.orange)
+            HStack(spacing: 8) {
+                Image(systemName: "exclamationmark.triangle")
+                    .foregroundStyle(DS.Status.danger)
+                Text(message)
+                    .dsType(.bodyMd)
+                    .foregroundStyle(DS.Text.primary)
+            }
         }
     }
 
@@ -99,33 +93,21 @@ struct SettingsView: View {
     }
 
     @ViewBuilder
-    private func card<Content: View>(
-        title: String,
-        icon: String,
+    private func section<Content: View>(
+        label: String,
         @ViewBuilder content: () -> Content
     ) -> some View {
-        VStack(alignment: .leading, spacing: 10) {
-            HStack(spacing: 6) {
-                Image(systemName: icon)
-                    .font(.system(size: 11, weight: .semibold))
-                    .foregroundStyle(BrandPalette.accent)
-                Text(title)
-                    .font(.system(size: 11, weight: .semibold))
-                    .textCase(.uppercase)
-                    .tracking(0.8)
-                    .foregroundStyle(BrandPalette.muted)
-            }
+        VStack(alignment: .leading, spacing: DS.Space.sm) {
+            Text(label)
+                .dsType(.labelSm)
+                .foregroundStyle(DS.Text.muted)
             content()
         }
-        .padding(14)
+        .padding(DS.Space.md)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(
-            RoundedRectangle(cornerRadius: 12, style: .continuous)
-                .fill(Color.white.opacity(0.04))
-        )
         .overlay(
-            RoundedRectangle(cornerRadius: 12, style: .continuous)
-                .stroke(BrandPalette.border, lineWidth: 1)
+            RoundedRectangle(cornerRadius: DS.Radius.lg, style: .continuous)
+                .stroke(DS.Outline.soft.opacity(0.5), lineWidth: 1)
         )
     }
 }
@@ -137,8 +119,6 @@ private struct FloatingWindowConfigurator: NSViewRepresentable {
     func updateNSView(_ nsView: NSView, context: Context) {
         DispatchQueue.main.async {
             guard let window = nsView.window else { return }
-            // One rank above the menu-bar popup (which uses `.statusBar`) so Settings
-            // is always visually in front of our own floating panels.
             window.level = NSWindow.Level(rawValue: NSWindow.Level.statusBar.rawValue + 1)
             window.collectionBehavior.insert([.canJoinAllSpaces, .fullScreenAuxiliary])
             window.hidesOnDeactivate = false

@@ -95,7 +95,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         window.isReleasedWhenClosed = false
         window.titlebarAppearsTransparent = true
         window.titleVisibility = .hidden
-        window.backgroundColor = NSColor(red: 0x0B/255.0, green: 0x11/255.0, blue: 0x1E/255.0, alpha: 1.0)
+        window.backgroundColor = NSColor(red: 0x13/255.0, green: 0x13/255.0, blue: 0x15/255.0, alpha: 1.0)
         window.appearance = NSAppearance(named: .darkAqua)
         window.contentViewController = host
         window.setContentSize(initialSize)
@@ -446,7 +446,7 @@ private struct SessionDotsCapsule: View {
             HStack(spacing: dotSpacing) {
                 if sessions.isEmpty {
                     Circle()
-                        .stroke(Color.white.opacity(0.35), lineWidth: 1)
+                        .stroke(DS.Outline.soft.opacity(0.6), lineWidth: 1)
                         .frame(width: dotSize, height: dotSize)
                 } else {
                     ForEach(sessions) { session in
@@ -456,13 +456,13 @@ private struct SessionDotsCapsule: View {
                     }
                 }
             }
-            .padding(.horizontal, 6)
+            .padding(.horizontal, 7)
             .padding(.vertical, 3)
             .background(
-                Capsule().fill(Color.black.opacity(0.85))
+                Capsule().fill(DS.Surface.containerLowest)
             )
             .overlay(
-                Capsule().stroke(Color.white.opacity(0.08), lineWidth: 0.5)
+                Capsule().stroke(DS.Outline.soft.opacity(0.6), lineWidth: 1)
             )
             .contentShape(Capsule())
         }
@@ -482,9 +482,11 @@ private struct PinnedSessionsDrawer: View {
                 Button(action: onCollapse) {
                     Image(systemName: "chevron.up")
                         .font(.system(size: 9, weight: .semibold))
-                        .foregroundStyle(.white.opacity(0.7))
-                        .padding(4)
-                        .background(Circle().fill(Color.white.opacity(0.1)))
+                        .foregroundStyle(DS.Text.muted)
+                        .padding(5)
+                        .overlay(
+                            Circle().stroke(DS.Outline.soft.opacity(0.6), lineWidth: 1)
+                        )
                 }
                 .buttonStyle(.plain)
                 .help("Collapse sessions")
@@ -492,15 +494,17 @@ private struct PinnedSessionsDrawer: View {
                 Button(action: onUnpin) {
                     Image(systemName: "pin.slash.fill")
                         .font(.system(size: 9, weight: .semibold))
-                        .foregroundStyle(.white.opacity(0.7))
-                        .padding(4)
-                        .background(Circle().fill(Color.white.opacity(0.1)))
+                        .foregroundStyle(DS.Text.muted)
+                        .padding(5)
+                        .overlay(
+                            Circle().stroke(DS.Outline.soft.opacity(0.6), lineWidth: 1)
+                        )
                 }
                 .buttonStyle(.plain)
                 .help("Unpin sessions")
             }
             .padding(.horizontal, 12)
-            .padding(.top, 8)
+            .padding(.top, 10)
             .padding(.bottom, 4)
 
             ProjectFoldersPanel(model: model, variant: .compact)
@@ -508,19 +512,12 @@ private struct PinnedSessionsDrawer: View {
                 .padding(.bottom, 10)
         }
         .frame(maxWidth: .infinity)
-        .background(
-            LinearGradient(
-                colors: [BrandPalette.panelTop, BrandPalette.panelBottom],
-                startPoint: .top,
-                endPoint: .bottom
-            )
-        )
-        .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+        .background(DS.Surface.containerLowest)
+        .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
         .overlay(
-            RoundedRectangle(cornerRadius: 16, style: .continuous)
-                .stroke(Color.white.opacity(0.08), lineWidth: 0.5)
+            RoundedRectangle(cornerRadius: 14, style: .continuous)
+                .stroke(DS.Outline.soft.opacity(0.55), lineWidth: 1)
         )
-        .shadow(color: .black.opacity(0.35), radius: 12, x: 0, y: 6)
         .padding(.horizontal, 4)
     }
 }
@@ -549,7 +546,7 @@ private struct NotchPillView: View {
                     Text("\(Int(percent.rounded()))%")
                         .font(.system(size: 9, weight: .semibold))
                         .monospacedDigit()
-                        .foregroundStyle(.white)
+                        .foregroundStyle(DS.Text.primary)
                         .fixedSize()
                 }
                 .padding(.horizontal, 4)
@@ -585,7 +582,7 @@ private struct MiniUsageBar: View {
     var body: some View {
         GeometryReader { geo in
             ZStack(alignment: .leading) {
-                Capsule().fill(Color.white.opacity(0.18))
+                Capsule().fill(DS.Outline.soft.opacity(0.6))
                 Capsule()
                     .fill(color)
                     .frame(
@@ -598,7 +595,7 @@ private struct MiniUsageBar: View {
                     let x = geo.size.width * CGFloat(min(1, max(0, stripeProgress)))
                     let minX = min(max(0, x - stripeWidth / 2), geo.size.width - stripeWidth)
                     Rectangle()
-                        .fill(Color.white.opacity(0.95))
+                        .fill(DS.Text.primary)
                         .frame(width: stripeWidth, height: geo.size.height + 2)
                         .offset(x: minX, y: 0)
                 }

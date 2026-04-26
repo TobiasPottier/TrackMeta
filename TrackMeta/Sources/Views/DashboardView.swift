@@ -1,10 +1,10 @@
 import SwiftUI
 import AppKit
 
-/// Compact dashboard with a scrollable content area.
-/// The dashboard doubles as the floating overlay — when pinned (via the pin
-/// button in the header) its hosting window is raised to floating level and
-/// kept above other apps.
+/// The dashboard is the editorial frame for the app — a single, monochrome
+/// canvas that lets the data take center stage. Cards are outline-only by
+/// default; the amber primary is reserved for the active "needs input" hero
+/// stat and the Refresh CTA.
 struct DashboardView: View {
     @Bindable var model: UsageViewModel
     var onTogglePinSessions: (() -> Void)? = nil
@@ -12,230 +12,168 @@ struct DashboardView: View {
     var onToggleWindowPin: (() -> Void)? = nil
 
     var body: some View {
-        mainContent
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
-            .background(
-                LinearGradient(
-                    colors: [BrandPalette.panelTop, BrandPalette.panelBottom],
-                    startPoint: .top,
-                    endPoint: .bottom
-                )
-                .ignoresSafeArea()
-            )
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .foregroundStyle(.white)
-    }
-
-    @ViewBuilder private var mainContent: some View {
         ScrollView {
-            VStack(alignment: .leading, spacing: 20) {
+            VStack(alignment: .leading, spacing: DS.Space.xl) {
                 header
-                peakCard
-                weeklyCard
-                fiveHourCard
-                chartCard
-                sessionsCard
+                heroSection
+                metaRow
+                chartSection
+                sessionsSection
             }
-            .padding(.horizontal, 24)
-            .padding(.vertical, 22)
+            .padding(.horizontal, DS.Space.xl)
+            .padding(.vertical, DS.Space.xl)
             .frame(maxWidth: .infinity, alignment: .leading)
         }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .background(DS.Surface.base.ignoresSafeArea())
+        .foregroundStyle(DS.Text.primary)
     }
 
     // MARK: - Header
 
     private var header: some View {
-        HStack(alignment: .top) {
-            VStack(alignment: .leading, spacing: 4) {
-                Text("Dashboard")
-                    .font(.system(size: 26, weight: .semibold))
-                    .tracking(-0.4)
-                Text("Live Claude Code sessions and Max usage")
-                    .font(.system(size: 12))
-                    .foregroundStyle(BrandPalette.muted)
+        HStack(alignment: .center, spacing: DS.Space.md) {
+            HStack(spacing: DS.Space.sm) {
+                TrackerLogo(size: 26)
+                VStack(alignment: .leading, spacing: 0) {
+                    Text("TrackMeta")
+                        .dsType(.labelSm)
+                        .foregroundStyle(DS.Text.muted)
+                    Text("Dashboard")
+                        .dsType(.headlineLg)
+                        .foregroundStyle(DS.Text.primary)
+                }
             }
             Spacer()
-            HStack(spacing: 10) {
-                IconHeaderButton(
-                    systemImage: "gearshape",
-                    action: SettingsLauncher.open
-                )
+            HStack(spacing: DS.Space.xs) {
+                Button(action: SettingsLauncher.open) {
+                    Image(systemName: "gearshape")
+                }
+                .buttonStyle(DSIconButtonStyle())
                 .help("Open TrackMeta settings")
+
                 if let onToggleWindowPin {
-                    SecondaryCapsuleButton(
-                        title: isWindowPinned ? "Unpin" : "Pin",
-                        systemImage: isWindowPinned ? "pin.slash.fill" : "pin.fill",
-                        highlighted: isWindowPinned,
-                        action: onToggleWindowPin
-                    )
+                    Button(action: onToggleWindowPin) {
+                        Image(systemName: isWindowPinned ? "pin.slash.fill" : "pin.fill")
+                    }
+                    .buttonStyle(DSIconButtonStyle(highlighted: isWindowPinned))
                     .help(isWindowPinned
                           ? "Stop floating the dashboard above other apps"
                           : "Float the dashboard above other apps")
                 }
-                SecondaryCapsuleButton(
-                    title: "Refresh",
-                    systemImage: "arrow.clockwise",
-                    action: model.refresh
-                )
+
+                Button(action: model.refresh) {
+                    Label("Refresh", systemImage: "arrow.clockwise")
+                }
+                .buttonStyle(DSPrimaryButtonStyle())
             }
         }
     }
 
-    // MARK: - Cards
+    // MARK: - Hero (5-hour) section
+    //
+    // The 5-hour usage gauge is the editorial centerpiece. It gets oversized
+    // type, generous whitespace, and a thin outline frame.
 
-    @ViewBuilder private var peakCard: some View {
-        DashCard {
-            PeakHoursIndicator()
+    @ViewBuilder private var heroSection: some View {
+        switch model.state {
+        case .idle, .loading:
+            LoadingRow()
+                .dsCard(.outline, radius: DS.Radius.lg, padding: DS.Space.lg)
+        case .failed(let message):
+            FailureRow(message: message)
+                .dsCard(.outline, radius: DS.Radius.lg, padding: DS.Space.lg)
+        case .loaded(let snap):
+            VStack(alignment: .leading, spacing: DS.Space.md) {
+                if snap.isUsageCapReached {
+                    UsageCapBanner(snapshot: snap)
+                }
+                UsageRow(
+                    title: "5-hour session",
+                    bucket: snap.fiveHour,
+                    sessionWindow: SessionWindow.fiveHourSeconds,
+                    style: .hero
+                )
+            }
+            .padding(DS.Space.lg)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .overlay(
+                RoundedRectangle(cornerRadius: DS.Radius.lg, style: .continuous)
+                    .stroke(DS.Outline.soft.opacity(0.55), lineWidth: 1)
+            )
         }
     }
 
-    @ViewBuilder private var fiveHourCard: some View {
-        DashCard {
-            switch model.state {
-            case .idle, .loading:
-                LoadingRow()
-            case .failed(let message):
-                FailureRow(message: message)
-            case .loaded(let snap):
-                VStack(alignment: .leading, spacing: 12) {
-                    if snap.isUsageCapReached {
-                        UsageCapBanner(snapshot: snap)
-                    }
+    // MARK: - Meta row (peak + weekly side-by-side)
+    //
+    // The two sibling cards now share the same inner anatomy: an icon-led
+    // header, a primary value, and a thin contextual line. Heights match via
+    // `.frame(maxHeight: .infinity)` on the inner content.
+
+    @ViewBuilder private var metaRow: some View {
+        HStack(alignment: .top, spacing: DS.Space.md) {
+            PeakHoursIndicator()
+                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+                .padding(DS.Space.md)
+                .overlay(
+                    RoundedRectangle(cornerRadius: DS.Radius.lg, style: .continuous)
+                        .stroke(DS.Outline.soft.opacity(0.55), lineWidth: 1)
+                )
+
+            Group {
+                switch model.state {
+                case .idle, .loading:
+                    LoadingRow()
+                case .failed(let message):
+                    FailureRow(message: message)
+                case .loaded(let snap):
                     UsageRow(
-                        title: "5-hour session",
-                        bucket: snap.fiveHour,
-                        sessionWindow: SessionWindow.fiveHourSeconds
+                        title: "Weekly",
+                        bucket: snap.sevenDay,
+                        sessionWindow: SessionWindow.sevenDaySeconds,
+                        style: .compact,
+                        icon: "calendar"
                     )
                 }
             }
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+            .padding(DS.Space.md)
+            .overlay(
+                RoundedRectangle(cornerRadius: DS.Radius.lg, style: .continuous)
+                    .stroke(DS.Outline.soft.opacity(0.55), lineWidth: 1)
+            )
         }
+        .fixedSize(horizontal: false, vertical: true)
     }
 
-    @ViewBuilder private var chartCard: some View {
+    // MARK: - Chart
+
+    @ViewBuilder private var chartSection: some View {
         if case .loaded(let snap) = model.state {
             SessionUsageChart(history: model.history, bucket: snap.fiveHour)
-                .frame(maxWidth: .infinity)
+                .dsCard(.outline, radius: DS.Radius.lg, padding: DS.Space.md)
         } else {
-            DashCard {
-                HStack {
-                    Spacer()
-                    Text("Chart unavailable")
-                        .font(.system(size: 11))
-                        .foregroundStyle(BrandPalette.muted)
-                    Spacer()
-                }
-                .frame(height: 220)
+            HStack {
+                Spacer()
+                Text("Chart unavailable")
+                    .dsType(.bodySm)
+                    .foregroundStyle(DS.Text.muted)
+                Spacer()
             }
+            .frame(height: 200)
+            .dsCard(.outline, radius: DS.Radius.lg, padding: DS.Space.md)
         }
     }
 
-    @ViewBuilder private var weeklyCard: some View {
-        DashCard {
-            switch model.state {
-            case .idle, .loading:
-                LoadingRow()
-            case .failed(let message):
-                FailureRow(message: message)
-            case .loaded(let snap):
-                UsageRow(
-                    title: "Weekly",
-                    bucket: snap.sevenDay,
-                    sessionWindow: SessionWindow.sevenDaySeconds
-                )
-            }
-        }
-    }
+    // MARK: - Sessions
 
-    @ViewBuilder private var sessionsCard: some View {
-        DashCard {
-            ProjectFoldersPanel(
-                model: model,
-                variant: .standard,
-                isPinned: model.sessionsPinned,
-                onTogglePin: onTogglePinSessions
-            )
-        }
-    }
-}
-
-// MARK: - Reusable card
-
-struct DashCard<Content: View>: View {
-    var padding: CGFloat = 16
-    @ViewBuilder var content: () -> Content
-
-    var body: some View {
-        content()
-            .padding(padding)
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .background(
-                RoundedRectangle(cornerRadius: 14, style: .continuous)
-                    .fill(BrandPalette.cardFill)
-            )
-            .overlay(
-                RoundedRectangle(cornerRadius: 14, style: .continuous)
-                    .stroke(BrandPalette.border, lineWidth: 1)
-            )
-    }
-}
-
-// MARK: - Buttons
-
-private struct IconHeaderButton: View {
-    let systemImage: String
-    let action: () -> Void
-
-    @State private var hovering = false
-
-    var body: some View {
-        Button(action: action) {
-            Image(systemName: systemImage)
-                .font(.system(size: 12, weight: .semibold))
-                .frame(width: 32, height: 32)
-                .background(
-                    RoundedRectangle(cornerRadius: 8, style: .continuous)
-                        .fill(hovering ? BrandPalette.cardFillHi : BrandPalette.cardFill)
-                )
-                .overlay(
-                    RoundedRectangle(cornerRadius: 8, style: .continuous)
-                        .stroke(BrandPalette.border, lineWidth: 1)
-                )
-                .foregroundStyle(BrandPalette.mutedStrong)
-        }
-        .buttonStyle(.plain)
-        .onHover { hovering = $0 }
-    }
-}
-
-private struct SecondaryCapsuleButton: View {
-    let title: String
-    let systemImage: String
-    var highlighted: Bool = false
-    let action: () -> Void
-
-    @State private var hovering = false
-
-    var body: some View {
-        Button(action: action) {
-            Label(title, systemImage: systemImage)
-                .font(.system(size: 12, weight: .semibold))
-                .padding(.horizontal, 14)
-                .padding(.vertical, 8)
-                .background(
-                    RoundedRectangle(cornerRadius: 8, style: .continuous)
-                        .fill(highlighted
-                              ? BrandPalette.accent.opacity(0.22)
-                              : (hovering ? BrandPalette.cardFillHi : BrandPalette.cardFill))
-                )
-                .overlay(
-                    RoundedRectangle(cornerRadius: 8, style: .continuous)
-                        .stroke(highlighted ? BrandPalette.accent.opacity(0.5) : BrandPalette.border,
-                                lineWidth: 1)
-                )
-                .foregroundStyle(highlighted ? BrandPalette.accent : BrandPalette.mutedStrong)
-        }
-        .buttonStyle(.plain)
-        .onHover { hovering = $0 }
+    @ViewBuilder private var sessionsSection: some View {
+        ProjectFoldersPanel(
+            model: model,
+            variant: .standard,
+            isPinned: model.sessionsPinned,
+            onTogglePin: onTogglePinSessions
+        )
     }
 }
 
@@ -243,11 +181,11 @@ private struct SecondaryCapsuleButton: View {
 
 private struct LoadingRow: View {
     var body: some View {
-        HStack(spacing: 10) {
+        HStack(spacing: DS.Space.sm) {
             ProgressView().controlSize(.small)
             Text("Loading usage…")
-                .font(.system(size: 12))
-                .foregroundStyle(BrandPalette.muted)
+                .dsType(.bodyMd)
+                .foregroundStyle(DS.Text.muted)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
     }
@@ -257,33 +195,26 @@ private struct FailureRow: View {
     let message: String
 
     var body: some View {
-        HStack(alignment: .top, spacing: 10) {
-            Image(systemName: "exclamationmark.triangle.fill")
-                .foregroundStyle(.orange)
+        HStack(alignment: .top, spacing: DS.Space.sm) {
+            Image(systemName: "exclamationmark.triangle")
+                .foregroundStyle(DS.Status.danger)
+                .padding(.top, 1)
             VStack(alignment: .leading, spacing: 4) {
                 Text("Couldn't load usage")
                     .font(.system(size: 12, weight: .semibold))
+                    .foregroundStyle(DS.Text.primary)
                 Text(message)
-                    .font(.system(size: 11))
-                    .foregroundStyle(BrandPalette.muted)
+                    .dsType(.bodySm)
+                    .foregroundStyle(DS.Text.muted)
                     .fixedSize(horizontal: false, vertical: true)
             }
         }
-        .padding(10)
-        .background(
-            RoundedRectangle(cornerRadius: 8, style: .continuous)
-                .fill(Color.orange.opacity(0.08))
-        )
-        .overlay(
-            RoundedRectangle(cornerRadius: 8, style: .continuous)
-                .stroke(Color.orange.opacity(0.25), lineWidth: 1)
-        )
     }
 }
 
 // MARK: - Settings launcher
 
-private enum SettingsLauncher {
+enum SettingsLauncher {
     static func open() {
         if #available(macOS 14, *) {
             NSApp.sendAction(Selector(("showSettingsWindow:")), to: nil, from: nil)

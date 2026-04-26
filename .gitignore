@@ -16,3 +16,6 @@ Package.resolved
 # CocoaPods / Carthage (if ever added)
 Pods/
 Carthage/Build/
+
+# Remotion demo source (rendered video is committed under media/)
+demo/

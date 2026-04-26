@@ -1,11 +1,12 @@
 import SwiftUI
 
-/// Official TrackMeta logo — a radar/crosshair "tracker" mark.
-/// Mirrors the #09 "Tracker" design from `logo-ideas.html`.
+/// TrackMeta logo — concentric rings + amber pulse dot. Redesigned for the
+/// Modern Refinement system: thin strokes, monochrome neutrals, the amber
+/// accent confined to the center mark.
 struct TrackerLogo: View {
     var size: CGFloat = 28
-    var accent: Color = BrandPalette.accent
-    var ring: Color = BrandPalette.ringLight
+    var accent: Color = DS.Primary.accent
+    var ring: Color = DS.Text.primary
     var filled: Bool = true
 
     var body: some View {
@@ -13,26 +14,26 @@ struct TrackerLogo: View {
             let s = min(canvasSize.width, canvasSize.height)
             let cx = canvasSize.width / 2
             let cy = canvasSize.height / 2
-            let stroke = max(1.2, s * 0.055)
+            let stroke = max(1.0, s * 0.045)
 
-            // Outer ring
-            let outerR = s * 0.38
+            // Outer ring (faint)
+            let outerR = s * 0.40
             ctx.stroke(
                 Path(ellipseIn: CGRect(x: cx - outerR, y: cy - outerR, width: outerR * 2, height: outerR * 2)),
-                with: .color(ring),
+                with: .color(ring.opacity(0.45)),
                 lineWidth: stroke
             )
 
-            // Inner ring
-            let innerR = s * 0.23
+            // Inner ring (slightly stronger)
+            let innerR = s * 0.24
             ctx.stroke(
                 Path(ellipseIn: CGRect(x: cx - innerR, y: cy - innerR, width: innerR * 2, height: innerR * 2)),
-                with: .color(ring),
+                with: .color(ring.opacity(0.7)),
                 lineWidth: stroke
             )
 
-            // Center dot
-            let dotR = s * 0.08
+            // Center dot (the only chromatic mark)
+            let dotR = s * 0.085
             let dotRect = CGRect(x: cx - dotR, y: cy - dotR, width: dotR * 2, height: dotR * 2)
             if filled {
                 ctx.fill(Path(ellipseIn: dotRect), with: .color(accent))
@@ -40,35 +41,43 @@ struct TrackerLogo: View {
                 ctx.stroke(Path(ellipseIn: dotRect), with: .color(accent), lineWidth: stroke)
             }
 
-            // Crosshair ticks (N/S/E/W)
-            let tickInner = s * 0.44
+            // Crosshair ticks (architectural metadata)
+            let tickInner = s * 0.46
             let tickOuter = s * 0.50
             var ticks = Path()
             ticks.move(to: CGPoint(x: cx, y: cy - tickOuter)); ticks.addLine(to: CGPoint(x: cx, y: cy - tickInner))
             ticks.move(to: CGPoint(x: cx, y: cy + tickInner)); ticks.addLine(to: CGPoint(x: cx, y: cy + tickOuter))
             ticks.move(to: CGPoint(x: cx - tickOuter, y: cy)); ticks.addLine(to: CGPoint(x: cx - tickInner, y: cy))
             ticks.move(to: CGPoint(x: cx + tickInner, y: cy)); ticks.addLine(to: CGPoint(x: cx + tickOuter, y: cy))
-            ctx.stroke(ticks, with: .color(ring), style: StrokeStyle(lineWidth: stroke, lineCap: .round))
+            ctx.stroke(ticks,
+                       with: .color(ring.opacity(0.5)),
+                       style: StrokeStyle(lineWidth: stroke, lineCap: .round))
         }
         .frame(width: size, height: size)
     }
 }
 
+/// Legacy palette mapped onto the Modern Refinement tokens. Kept so existing
+/// view code keeps compiling — new code should reference `DS.*` directly.
 enum BrandPalette {
-    // Midnight-blue palette (2026 redesign).
-    static let accent       = Color(red: 0x4C/255.0, green: 0x8B/255.0, blue: 0xF5/255.0) // signal blue
-    static let accentSoft   = Color(red: 0x7FA9/65535.0, green: 0xB6F0/65535.0, blue: 0xFBFF/65535.0)
-    static let accentPale   = Color(red: 0xBF/255.0, green: 0xD6/255.0, blue: 0xFB/255.0)
-    static let ringLight    = Color(red: 0xDC/255.0, green: 0xE6/255.0, blue: 0xFA/255.0)
-    static let panelTop     = Color(red: 0x0E/255.0, green: 0x14/255.0, blue: 0x23/255.0)
-    static let panelBottom  = Color(red: 0x08/255.0, green: 0x0C/255.0, blue: 0x17/255.0)
-    static let sidebar      = Color(red: 0x0B/255.0, green: 0x11/255.0, blue: 0x1E/255.0)
-    static let cardFill     = Color(red: 0x10/255.0, green: 0x17/255.0, blue: 0x29/255.0)
-    static let cardFillHi   = Color(red: 0x14/255.0, green: 0x1C/255.0, blue: 0x33/255.0)
-    static let border       = Color(red: 0x1C/255.0, green: 0x25/255.0, blue: 0x3C/255.0)
-    static let borderSoft   = Color(red: 0x17/255.0, green: 0x1F/255.0, blue: 0x33/255.0)
-    static let muted        = Color(red: 0x7A/255.0, green: 0x84/255.0, blue: 0xA0/255.0)
-    static let mutedStrong  = Color(red: 0x9B/255.0, green: 0xA6/255.0, blue: 0xC1/255.0)
+    static let accent       = DS.Primary.accent
+    static let accentSoft   = DS.Primary.accentPale
+    static let accentPale   = DS.Primary.accentPale
+    static let ringLight    = DS.Text.primary
+
+    /// "Panel" tones now resolve to the unified surface (no gradient) so the
+    /// app reads as a single editorial canvas rather than a layered widget.
+    static let panelTop     = DS.Surface.base
+    static let panelBottom  = DS.Surface.base
+    static let sidebar      = DS.Surface.containerLowest
+    static let cardFill     = DS.Surface.containerLow
+    static let cardFillHi   = DS.Surface.container
+
+    static let border       = DS.Outline.soft.opacity(0.55)
+    static let borderSoft   = DS.Outline.soft.opacity(0.35)
+
+    static let muted        = DS.Text.muted
+    static let mutedStrong  = DS.Text.secondary
 }
 
 #Preview {
@@ -78,5 +87,5 @@ enum BrandPalette {
         TrackerLogo(size: 18)
     }
     .padding()
-    .background(Color.black)
+    .background(DS.Surface.base)
 }

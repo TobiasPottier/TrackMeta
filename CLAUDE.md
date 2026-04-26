@@ -4,18 +4,20 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## What this is
 
-TrackMeta is a macOS menu bar (`MenuBarExtra`) SwiftUI app that surfaces Claude Max usage next to the clock. It does **not** use the public Anthropic API's usage endpoints (those don't expose Max subscription usage). Instead, it sends a cheap 1-token `POST /v1/messages` request and reads the rate-limit utilization from the **response headers** (`anthropic-ratelimit-unified-5h-utilization` / `-7d-utilization` and their `-reset` counterparts).
+TrackMeta is a macOS SwiftUI app that surfaces Claude Max usage in the menu-bar area. It does **not** use the public Anthropic API's usage endpoints (those don't expose Max subscription usage). Instead, it sends a cheap 1-token `POST /v1/messages` request and reads the rate-limit utilization from the **response headers** (`anthropic-ratelimit-unified-5h-utilization` / `-7d-utilization` and their `-reset` counterparts).
 
 Beyond the core usage readout, the app also:
 
-- Polls `http://localhost:7777` once per second for live Claude Code sessions (status / last tool / last-tool-target / cwd / summary / context_percentage) and groups them by their working directory in a read-only **Sessions** panel. A connection failure is not an error — empty sessions is a valid state. TrackMeta does **not** start sessions or control iTerm; session lifecycle is owned by the user's IDE / CLI.
+- Renders a custom **notch pill** (one `NotchPillPanel` per connected display, anchored under the real notch on built-in displays or under a synthetic 200pt notch on external monitors). The pill shows percent + the session-elapsed stripe and click-toggles the dashboard. Displays without a usable notch fall back to a classic `NSStatusItem`.
+- Optionally pins a small **sessions drawer** under the pill (`sessionsPinned`) that can be expanded into the full per-folder sessions list or collapsed to a row of status dots (`sessionsPinnedCollapsed`).
+- Polls `http://localhost:7777` once per second for live Claude Code sessions (status / last tool / last-tool-target / cwd / summary / context_percentage) and groups them by their working directory in the read-only **Sessions** panel. Connection failure is not an error — empty sessions is a valid state. TrackMeta does **not** start sessions; session lifecycle is owned by the user's IDE / CLI.
 - Buffers per-session metadata locally (first-seen time, recent events, per-minute activity buckets) so each tile can show an elapsed timer, an activity sparkline, and a short event log even though the server itself is stateless.
-- Persists a rolling buffer of 5h-window usage samples and plots them as a Swift Charts history in the popover.
+- Persists a rolling buffer of 5h-window usage samples and plots them as a Swift Charts history in the dashboard.
 - Registers a process-wide ⌃⌥Space global hotkey (Carbon API) that toggles the dashboard window.
-- Opens a single dashboard window (1120x720, midnight-blue redesign) that shows peak hours, 5-hour usage, the usage chart, weekly usage, and the Sessions panel. A **Pin** button in the header toggles the dashboard's window level to `.floating` so it stays above other apps — this is the only floating UI (there is no separate floating panel).
+- Opens a single dashboard window (920x700, "Modern Refinement" near-black surface + amber accent) that shows the hero usage stat, peak hours / 5h / 7d meta row, the usage chart, and the Sessions panel. A **Pin** button in the header toggles the dashboard's window level to `.floating` so it stays above other apps — this is the only floating UI (there is no separate floating panel).
 - Raises the Settings window above the status bar via a FloatingWindowConfigurator.
 
-Credentials come from the Claude Code CLI's OAuth access token, read out of the macOS Keychain (service `Claude Code-credentials`, JSON value, `claudeAiOauth.accessToken`). The app does not store credentials of its own, but it **does** persist three UserDefaults keys: `usageHistory.v1` (sample buffer), `TrackMeta.sessionsPinned` (pin toggle), and `TrackMeta.orchestratorFolders` (saved project folder paths).
+Credentials come from the Claude Code CLI's OAuth access token, read out of the macOS Keychain (service `Claude Code-credentials`, JSON value, `claudeAiOauth.accessToken`). The app does not store credentials of its own, but it **does** persist four UserDefaults keys: `usageHistory.v1` (sample buffer), `TrackMeta.sessionsPinned` + `TrackMeta.sessionsPinnedCollapsed` (notch-drawer toggles), and `TrackMeta.dashboardPinned` (dashboard floating state).
 
 ## Build / run / test
 
@@ -36,13 +38,13 @@ xcodebuild -project TrackMeta/TrackMeta.xcodeproj -scheme TrackMeta \
 xcodebuild ... test -only-testing:TrackMetaTests/TrackMetaTests/<methodName>
 ```
 
-Target: macOS 14+. App is an `LSUIElement` agent (no Dock icon). Needs outbound HTTPS to `api.anthropic.com` — the entitlements file keeps sandbox on with `com.apple.security.network.client`.
+Target: macOS 14+. App is an `LSUIElement` agent (no Dock icon by default). Needs outbound HTTPS to `api.anthropic.com` — the entitlements file keeps sandbox on with `com.apple.security.network.client`.
 
 ## First-run requirements
 
 - The Claude Code CLI (`claude`) must already be logged in on this Mac so the Keychain item `Claude Code-credentials` exists. Without it the UI shows "No Claude Code credentials found."
 - First Keychain read triggers a macOS prompt — the user must click **Always Allow** for silent subsequent reads. If they pick "Allow Once", every refresh re-prompts.
-- When the token expires, requests return 401 → user runs `claude /login` and hits Reload.
+- When the token expires, requests return 401 → user runs `claude /login` and hits Refresh.
 - When Anthropic returns 429 or 439, treat it as Claude Max usage-cap reached, not a hard load error. The UI should render the normal app, mark the cap as reached, preserve the last known usage percentages if the capped response omits utilization headers, and continue showing sessions.
 - The Sessions panel depends on a local sessions server reachable at `http://localhost:7777`. If it isn't running, the Sessions section stays empty but the usage readout still works.
 - ⌃⌥Space is registered as a process-wide hotkey that toggles the dashboard window from anywhere.
@@ -53,7 +55,7 @@ Layered, one-way data flow: Keychain → Client → ViewModel → Views. Everyth
 
 ```
 Sources/
-  App/TrackMetaApp.swift            @main; MenuBarExtra(.window) + Settings scene; wires hotkey + notch pill + dashboard window; owns the dashboard "pin to floating" toggle
+  App/TrackMetaApp.swift            @main; Settings scene + AppDelegate that owns the NSStatusItem, per-display NotchPillPanels (with NotchPillContainer / SessionDotsCapsule / PinnedSessionsDrawer), the global hotkey, and the dashboard window. Owns the dashboard "pin to floating" toggle.
   Models/
     UsageSnapshot.swift             UsageBucket, UsageSnapshot, UsageLoadState, sessionProgress(...)
     ClaudeSession.swift             ClaudeSession model (status / lastTool / lastToolTarget / cwd / summary / contextPercentage)
@@ -65,16 +67,17 @@ Sources/
     GlobalHotkey.swift              Carbon process-wide ⌃⌥Space → toggle dashboard
     UsageHistoryStore.swift         UserDefaults-backed 5h sample buffer (key "usageHistory.v1")
     SessionHistoryStore.swift       SessionHistory + SessionHistoryIngestion (pure); per-session events / activity buckets / firstSeenAt
-  ViewModels/UsageViewModel.swift   @Observable; 60s usage loop + 1s session loop; owns sessions, sessionHistories, expandedSessionIds, autoExpand window, sessionsPinned, unifiedFolderGroups (live sessions grouped by cwd)
+  ViewModels/UsageViewModel.swift   @Observable; 60s usage loop + 1s session loop; owns sessions, sessionHistories, expandedSessionIds, autoExpand window, sessionsPinned, sessionsPinnedCollapsed, unifiedFolderGroups (live sessions grouped by cwd)
   Views/
-    MenuBarLabel.swift              110pt indicator: % + session-elapsed stripe + center dot + time-until-reset
-    UsagePopover.swift              notch-attached popover (NotchIslandShape), 560pt wide, Swift Charts usage history
-    DashboardView.swift             single-pane dashboard: peak + 5h + chart + weekly + Sessions card; header has Pin / Refresh buttons
-    ProjectFoldersPanel.swift       read-only Sessions panel: groups live sessions by cwd, indents SessionTiles under each folder row
+    DesignSystem.swift              "Modern Refinement" tokens — DS.Surface (near-black, #131315 base), DS.Text, DS.Primary (amber #FBBF24), DS.Outline. The amber accent is reserved for primary actions / "needs input" hero state.
+    MenuBarLabel.swift              fallback NSStatusItem indicator (used on displays without a notch)
+    UsagePopover.swift              popover surface (notch-attached NotchIslandShape variants), Swift Charts usage history
+    DashboardView.swift             single-pane dashboard: header (Settings / Pin / Refresh), hero, meta row (peak / 5h / 7d), chart, Sessions card
+    ProjectFoldersPanel.swift       read-only Sessions panel: groups live sessions by cwd, indents SessionTiles under each folder row. Has compact / full variants.
     SessionTile.swift               per-agent tile w/ collapsed and expanded layouts; ActivitySparkline of per-minute event counts
     SessionVisuals.swift            shared SessionStatusPalette + PulsingDot
     SettingsView.swift              Settings scene body; FloatingWindowConfigurator raises above .statusBar
-    TrackerLogo.swift               brand mark + BrandPalette (midnight-blue: sidebar / cardFill / borderSoft / mutedStrong)
+    TrackerLogo.swift               brand mark
 ```
 
 Key invariants to preserve when editing:
@@ -93,6 +96,8 @@ Key invariants to preserve when editing:
 - `UsageViewModel.refreshOnce` passes `lastLoadedSnapshot` to `ClaudeUsageClient.fetchSnapshot(preservingUsageFrom:)` so a 429/439 response with missing utilization headers preserves the last known percentage instead of flickering to 0. It also no longer drops to `.loading` once a snapshot has loaded — the view keeps rendering the last value while a refresh is in flight.
 - The dashboard's **Pin** button flips the hosting window between `.normal` and `.floating` level via `AppDelegate.applyPinnedBehavior(to:)`. The pinned state persists to UserDefaults (`TrackMeta.dashboardPinned`). There is no separate floating panel — the dashboard itself is the float target.
 - `AppDelegate.updateActivationPolicy()` drops back to `.accessory` whenever the dashboard window is not visible. It is the single place that decision lives.
+- `NotchPillPanel.setFrame(...)` overrides re-anchor any AppKit-driven resize back onto `centerX` / `topY` — without those overrides the panel drifts when its content shrinks/grows. Don't bypass the overrides by setting frames through other paths.
+- `AppDelegate.updatePillPresentation()` keeps one panel per `CGDirectDisplayID`, hides the fallback `NSStatusItem` whenever any pill is shown, and tears down panels for displays that disappear. It must be called from `didChangeScreenParametersNotification`.
 - TrackMeta is strictly a read-only session viewer. Do not reintroduce iTerm launching, orchestration, or session-spawning flows — session lifecycle belongs to the user's IDE.
 
 ## Things that are easy to get wrong
@@ -103,3 +108,4 @@ Key invariants to preserve when editing:
 - UserDefaults keys `usageHistory.v1`, `TrackMeta.sessionsPinned`, `TrackMeta.sessionsPinnedCollapsed`, and `TrackMeta.dashboardPinned` are persistence contracts. Renaming any of them wipes user state on upgrade.
 - `TrackMeta.entitlements` only needs `com.apple.security.app-sandbox` + `com.apple.security.network.client`. Do not re-add Apple Events / iTerm / user-selected-files entitlements — they were dropped when the iTerm launcher was removed.
 - The notch-pill tap action calls `openDashboard()` (always show), not `toggleDashboard()` — toggling caused the dashboard to close on the same click that re-focused it. The status-bar icon click still toggles.
+- Use `DS.*` design tokens from `DesignSystem.swift` for colors / spacing / type. The older `BrandPalette` "midnight-blue" tokens have been replaced — don't reintroduce them or hand-roll hex literals in views.
