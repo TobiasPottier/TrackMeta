@@ -329,9 +329,12 @@ private struct UsageBar: View {
 
 // MARK: - Usage forecast
 //
-// Linear least-squares fit over the in-window history projects where usage
-// will end up. The result is the endpoint of the forecast segment that begins
-// at the current sample — either at the session end, or earlier if the slope
+// Exponentially weighted least-squares fit over the in-window history projects
+// where usage will end up. Recent samples dominate the slope (weight decays
+// with the supplied `halfLife`), so a flat early period followed by a recent
+// ramp produces a steep forecast instead of a line averaged across the whole
+// window. The result is the endpoint of the forecast segment that begins at
+// the current sample — either at the session end, or earlier if the slope
 // would push usage past 100% before the window closes.
 
 struct UsageForecast {
@@ -344,7 +347,8 @@ func linearUsageForecast(
     valueFor: (UsageSample) -> Double,
     currentTime: Date,
     currentValue: Double,
-    until endTime: Date
+    until endTime: Date,
+    halfLife: TimeInterval
 ) -> UsageForecast? {
     guard endTime > currentTime else { return nil }
     let scoped = samples.filter { $0.timestamp <= currentTime }
@@ -353,17 +357,26 @@ func linearUsageForecast(
           let last = scoped.last,
           last.timestamp.timeIntervalSince(first.timestamp) >= 60 else { return nil }
 
-    let baseTime = first.timestamp.timeIntervalSince1970
-    let xs = scoped.map { $0.timestamp.timeIntervalSince1970 - baseTime }
+    let referenceTime = last.timestamp.timeIntervalSince1970
+    let decay = log(2.0) / max(halfLife, 1)
+    let xs = scoped.map { $0.timestamp.timeIntervalSince1970 - referenceTime }
     let ys = scoped.map(valueFor)
-    let n = Double(scoped.count)
-    let sumX = xs.reduce(0, +)
-    let sumY = ys.reduce(0, +)
-    let sumXY = zip(xs, ys).reduce(0) { $0 + $1.0 * $1.1 }
-    let sumX2 = xs.reduce(0) { $0 + $1 * $1 }
-    let denom = n * sumX2 - sumX * sumX
-    guard denom > 0 else { return nil }
-    let slope = (n * sumXY - sumX * sumY) / denom
+    let ws = xs.map { exp(decay * $0) }  // xs are <= 0, so weights are <= 1
+
+    let sumW = ws.reduce(0, +)
+    guard sumW > 0 else { return nil }
+    let meanX = zip(ws, xs).reduce(0) { $0 + $1.0 * $1.1 } / sumW
+    let meanY = zip(ws, ys).reduce(0) { $0 + $1.0 * $1.1 } / sumW
+
+    var num = 0.0
+    var den = 0.0
+    for i in xs.indices {
+        let dx = xs[i] - meanX
+        num += ws[i] * dx * (ys[i] - meanY)
+        den += ws[i] * dx * dx
+    }
+    guard den > 0 else { return nil }
+    let slope = num / den
 
     let deltaSeconds = endTime.timeIntervalSince(currentTime)
     let projectedRaw = currentValue + slope * deltaSeconds
@@ -431,7 +444,8 @@ struct SessionUsageChart: View {
             valueFor: { $0.fiveHourPercent },
             currentTime: marker.timestamp,
             currentValue: marker.fiveHourPercent,
-            until: sessionEnd
+            until: sessionEnd,
+            halfLife: 30 * 60
         )
     }
 
@@ -636,7 +650,8 @@ struct WeeklyUsageChart: View {
             valueFor: { $0.sevenDayPercent },
             currentTime: marker.timestamp,
             currentValue: marker.sevenDayPercent,
-            until: weekEnd
+            until: weekEnd,
+            halfLife: 12 * 60 * 60
         )
     }
 
