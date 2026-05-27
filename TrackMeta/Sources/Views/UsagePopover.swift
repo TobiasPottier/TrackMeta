@@ -455,6 +455,13 @@ struct SessionUsageChart: View {
         return f
     }()
 
+    private func forecastLabel(_ forecast: UsageForecast) -> String {
+        if forecast.endValue >= 100 {
+            return "hits 100% at \(Self.boundaryFormatter.string(from: forecast.endTime))"
+        }
+        return "\(Int(forecast.endValue.rounded()))% by reset"
+    }
+
     var body: some View {
         VStack(alignment: .leading, spacing: DS.Space.sm) {
             HStack(alignment: .firstTextBaseline) {
@@ -469,7 +476,7 @@ struct SessionUsageChart: View {
                             .foregroundStyle(DS.Text.secondary)
                             .monospacedDigit()
                         if let forecast {
-                            Text("· \(Int(forecast.endValue.rounded()))% projected")
+                            Text("· \(forecastLabel(forecast))")
                                 .dsType(.bodySm)
                                 .foregroundStyle(DS.Text.muted)
                                 .monospacedDigit()
@@ -648,6 +655,19 @@ struct WeeklyUsageChart: View {
 
     private var chartColor: Color { usageColor(for: bucket.percent) }
 
+    private static let forecastFormatter: DateFormatter = {
+        let f = DateFormatter()
+        f.dateFormat = "EEE HH:mm"
+        return f
+    }()
+
+    private func forecastLabel(_ forecast: UsageForecast) -> String {
+        if forecast.endValue >= 100 {
+            return "hits 100% at \(Self.forecastFormatter.string(from: forecast.endTime))"
+        }
+        return "\(Int(forecast.endValue.rounded()))% by reset"
+    }
+
     var body: some View {
         VStack(alignment: .leading, spacing: DS.Space.sm) {
             HStack(alignment: .firstTextBaseline) {
@@ -662,7 +682,7 @@ struct WeeklyUsageChart: View {
                             .foregroundStyle(DS.Text.secondary)
                             .monospacedDigit()
                         if let forecast {
-                            Text("· \(Int(forecast.endValue.rounded()))% projected")
+                            Text("· \(forecastLabel(forecast))")
                                 .dsType(.bodySm)
                                 .foregroundStyle(DS.Text.muted)
                                 .monospacedDigit()
