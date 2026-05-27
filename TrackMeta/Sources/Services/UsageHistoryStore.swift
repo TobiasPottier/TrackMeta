@@ -1,8 +1,8 @@
 import Foundation
 
-// Persists the in-session usage chart history across app launches.
-// Backed by UserDefaults — the payload is small (one sample per minute, capped
-// to a 5h session window ≈ 300 samples).
+// Persists the usage chart history across app launches.
+// Backed by UserDefaults — one sample per minute, capped to a 7-day weekly
+// window (~10k samples). Both the 5h and weekly charts read from this buffer.
 struct UsageHistoryStore {
     private let defaults: UserDefaults
     private let key: String
@@ -15,7 +15,7 @@ struct UsageHistoryStore {
     func load(asOf now: Date) -> [UsageSample] {
         guard let data = defaults.data(forKey: key) else { return [] }
         guard let decoded = try? JSONDecoder().decode([UsageSample].self, from: data) else { return [] }
-        let cutoff = now.addingTimeInterval(-SessionWindow.fiveHourSeconds)
+        let cutoff = now.addingTimeInterval(-SessionWindow.sevenDaySeconds)
         return decoded.filter { $0.timestamp >= cutoff }
     }
 

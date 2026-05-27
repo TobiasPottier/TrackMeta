@@ -28,6 +28,20 @@ enum SessionWindow {
 struct UsageSample: Equatable, Codable {
     let timestamp: Date
     let fiveHourPercent: Double
+    let sevenDayPercent: Double
+
+    init(timestamp: Date, fiveHourPercent: Double, sevenDayPercent: Double) {
+        self.timestamp = timestamp
+        self.fiveHourPercent = fiveHourPercent
+        self.sevenDayPercent = sevenDayPercent
+    }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        self.timestamp = try c.decode(Date.self, forKey: .timestamp)
+        self.fiveHourPercent = try c.decode(Double.self, forKey: .fiveHourPercent)
+        self.sevenDayPercent = try c.decodeIfPresent(Double.self, forKey: .sevenDayPercent) ?? 0
+    }
 }
 
 struct UsageSnapshot: Equatable {

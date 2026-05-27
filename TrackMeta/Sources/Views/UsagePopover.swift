@@ -351,10 +351,19 @@ struct SessionUsageChart: View {
         min(max(now, sessionStart), sessionEnd)
     }
 
+    private var windowedHistory: [UsageSample] {
+        history.filter { $0.timestamp >= sessionStart && $0.timestamp <= sessionEnd }
+    }
+
     private var plottedHistory: [UsageSample] {
-        guard let last = history.last else { return history }
-        guard clampedNow > last.timestamp else { return history }
-        return history + [UsageSample(timestamp: clampedNow, fiveHourPercent: last.fiveHourPercent)]
+        let scoped = windowedHistory
+        guard let last = scoped.last else { return scoped }
+        guard clampedNow > last.timestamp else { return scoped }
+        return scoped + [UsageSample(
+            timestamp: clampedNow,
+            fiveHourPercent: last.fiveHourPercent,
+            sevenDayPercent: last.sevenDayPercent
+        )]
     }
 
     private var markerSample: UsageSample? {
@@ -388,7 +397,7 @@ struct SessionUsageChart: View {
                     .dsType(.labelSm)
                     .foregroundStyle(DS.Text.muted)
                 Spacer()
-                if let last = history.last {
+                if let last = windowedHistory.last {
                     Text("\(Int(last.fiveHourPercent.rounded()))% used")
                         .dsType(.bodySm)
                         .foregroundStyle(DS.Text.secondary)
@@ -461,6 +470,153 @@ struct SessionUsageChart: View {
             .chartXAxis {
                 AxisMarks(preset: .aligned, values: hourTicks) { _ in
                     AxisValueLabel(format: .dateTime.hour(.defaultDigits(amPM: .omitted)).minute(),
+                                   collisionResolution: .disabled)
+                        .font(.system(size: 9, weight: .medium).monospacedDigit())
+                        .foregroundStyle(DS.Text.muted.opacity(0.7))
+                }
+            }
+            .frame(height: 180)
+            .onReceive(ticker) { now = $0 }
+        }
+    }
+}
+
+// MARK: - Weekly usage chart
+
+struct WeeklyUsageChart: View {
+    let history: [UsageSample]
+    let bucket: UsageBucket
+
+    @State private var now: Date = Date()
+    private let ticker = Timer.publish(every: 60, on: .main, in: .common).autoconnect()
+
+    private var weekStart: Date {
+        if let resetsAt = bucket.resetsAt {
+            return resetsAt.addingTimeInterval(-SessionWindow.sevenDaySeconds)
+        }
+        return history.first?.timestamp ?? now.addingTimeInterval(-SessionWindow.sevenDaySeconds)
+    }
+
+    private var weekEnd: Date {
+        bucket.resetsAt ?? now
+    }
+
+    private var clampedNow: Date {
+        min(max(now, weekStart), weekEnd)
+    }
+
+    private var windowedHistory: [UsageSample] {
+        history.filter { $0.timestamp >= weekStart && $0.timestamp <= weekEnd }
+    }
+
+    private var plottedHistory: [UsageSample] {
+        let scoped = windowedHistory
+        guard let last = scoped.last else { return scoped }
+        guard clampedNow > last.timestamp else { return scoped }
+        return scoped + [UsageSample(
+            timestamp: clampedNow,
+            fiveHourPercent: last.fiveHourPercent,
+            sevenDayPercent: last.sevenDayPercent
+        )]
+    }
+
+    private var markerSample: UsageSample? { plottedHistory.last }
+
+    private var dayTicks: [Date] {
+        let cal = Calendar.current
+        let comps = cal.dateComponents([.year, .month, .day], from: weekStart)
+        guard var tick = cal.date(from: comps) else { return [] }
+        var ticks: [Date] = []
+        while tick <= weekEnd {
+            if tick >= weekStart { ticks.append(tick) }
+            guard let next = cal.date(byAdding: .day, value: 1, to: tick) else { break }
+            tick = next
+        }
+        return ticks
+    }
+
+    private var chartColor: Color { usageColor(for: bucket.percent) }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: DS.Space.sm) {
+            HStack(alignment: .firstTextBaseline) {
+                Text("Weekly pace")
+                    .dsType(.labelSm)
+                    .foregroundStyle(DS.Text.muted)
+                Spacer()
+                if let last = windowedHistory.last {
+                    Text("\(Int(last.sevenDayPercent.rounded()))% used")
+                        .dsType(.bodySm)
+                        .foregroundStyle(DS.Text.secondary)
+                        .monospacedDigit()
+                }
+            }
+
+            Chart {
+                ForEach(plottedHistory, id: \.timestamp) { sample in
+                    AreaMark(
+                        x: .value("Time", sample.timestamp),
+                        y: .value("Usage", sample.sevenDayPercent)
+                    )
+                    .foregroundStyle(
+                        LinearGradient(
+                            colors: [chartColor.opacity(0.22), chartColor.opacity(0.0)],
+                            startPoint: .top,
+                            endPoint: .bottom
+                        )
+                    )
+                    .interpolationMethod(.monotone)
+
+                    LineMark(
+                        x: .value("Time", sample.timestamp),
+                        y: .value("Usage", sample.sevenDayPercent)
+                    )
+                    .foregroundStyle(chartColor)
+                    .lineStyle(StrokeStyle(lineWidth: 1.5, lineCap: .round, lineJoin: .round))
+                    .interpolationMethod(.monotone)
+                }
+
+                LineMark(
+                    x: .value("Time", weekStart),
+                    y: .value("Pace", 0),
+                    series: .value("Series", "pace")
+                )
+                .foregroundStyle(DS.Text.muted.opacity(0.65))
+                .lineStyle(StrokeStyle(lineWidth: 1.25, dash: [4, 4]))
+
+                LineMark(
+                    x: .value("Time", weekEnd),
+                    y: .value("Pace", 100),
+                    series: .value("Series", "pace")
+                )
+                .foregroundStyle(DS.Text.muted.opacity(0.65))
+                .lineStyle(StrokeStyle(lineWidth: 1.25, dash: [4, 4]))
+
+                ForEach(dayTicks, id: \.self) { tick in
+                    RuleMark(x: .value("Day", tick))
+                        .foregroundStyle(DS.Outline.soft.opacity(0.18))
+                        .lineStyle(StrokeStyle(lineWidth: 0.5))
+                }
+
+                RuleMark(x: .value("Now", clampedNow))
+                    .foregroundStyle(DS.Text.secondary.opacity(0.55))
+                    .lineStyle(StrokeStyle(lineWidth: 1))
+
+                if let markerSample {
+                    PointMark(
+                        x: .value("Current", markerSample.timestamp),
+                        y: .value("Usage", markerSample.sevenDayPercent)
+                    )
+                    .symbolSize(34)
+                    .foregroundStyle(chartColor)
+                }
+            }
+            .chartXScale(domain: weekStart...weekEnd)
+            .chartYScale(domain: 0...100)
+            .chartYAxis(.hidden)
+            .chartXAxis {
+                AxisMarks(preset: .aligned, values: dayTicks) { _ in
+                    AxisValueLabel(format: .dateTime.weekday(.abbreviated),
                                    collisionResolution: .disabled)
                         .font(.system(size: 9, weight: .medium).monospacedDigit())
                         .foregroundStyle(DS.Text.muted.opacity(0.7))

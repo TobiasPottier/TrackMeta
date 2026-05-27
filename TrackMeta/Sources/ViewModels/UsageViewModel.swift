@@ -31,7 +31,7 @@ final class UsageViewModel {
     private let store: UsageHistoryStore
     private var refreshTask: Task<Void, Never>?
     private var sessionTask: Task<Void, Never>?
-    private var lastSessionResetsAt: Date?
+    private var lastWeeklyResetsAt: Date?
     private var lastLoadedSnapshot: UsageSnapshot?
 
     init(client: ClaudeUsageClient = ClaudeUsageClient(),
@@ -199,21 +199,25 @@ final class UsageViewModel {
     }
 
     private func recordSample(from snap: UsageSnapshot) {
-        let resetsAt = snap.fiveHour.resetsAt
+        let resetsAt = snap.sevenDay.resetsAt
         let rolledOver: Bool = {
-            guard let prev = lastSessionResetsAt, let now = resetsAt else { return false }
+            guard let prev = lastWeeklyResetsAt, let now = resetsAt else { return false }
             return now > prev
         }()
         let base: [UsageSample] = rolledOver ? [] : history
-        let sample = UsageSample(timestamp: snap.fetchedAt, fiveHourPercent: snap.fiveHour.percent)
+        let sample = UsageSample(
+            timestamp: snap.fetchedAt,
+            fiveHourPercent: snap.fiveHour.percent,
+            sevenDayPercent: snap.sevenDay.percent
+        )
         let cutoff: Date = {
             if let resetsAt {
-                return resetsAt.addingTimeInterval(-SessionWindow.fiveHourSeconds)
+                return resetsAt.addingTimeInterval(-SessionWindow.sevenDaySeconds)
             }
-            return snap.fetchedAt.addingTimeInterval(-SessionWindow.fiveHourSeconds)
+            return snap.fetchedAt.addingTimeInterval(-SessionWindow.sevenDaySeconds)
         }()
         history = (base + [sample]).filter { $0.timestamp >= cutoff }
-        lastSessionResetsAt = resetsAt
+        lastWeeklyResetsAt = resetsAt
         store.save(history)
     }
 }

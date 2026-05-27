@@ -18,6 +18,7 @@ struct DashboardView: View {
                 heroSection
                 metaRow
                 chartSection
+                weeklyChartSection
                 sessionsSection
             }
             .padding(.horizontal, DS.Space.xl)
@@ -156,6 +157,25 @@ struct DashboardView: View {
             HStack {
                 Spacer()
                 Text("Chart unavailable")
+                    .dsType(.bodySm)
+                    .foregroundStyle(DS.Text.muted)
+                Spacer()
+            }
+            .frame(height: 200)
+            .dsCard(.outline, radius: DS.Radius.lg, padding: DS.Space.md)
+        }
+    }
+
+    // MARK: - Weekly chart
+
+    @ViewBuilder private var weeklyChartSection: some View {
+        if case .loaded(let snap) = model.state {
+            WeeklyUsageChart(history: model.history, bucket: snap.sevenDay)
+                .dsCard(.outline, radius: DS.Radius.lg, padding: DS.Space.md)
+        } else {
+            HStack {
+                Spacer()
+                Text("Weekly chart unavailable")
                     .dsType(.bodySm)
                     .foregroundStyle(DS.Text.muted)
                 Spacer()
