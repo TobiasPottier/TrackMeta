@@ -358,8 +358,7 @@ struct SessionUsageChart: View {
     }
 
     private var markerSample: UsageSample? {
-        guard let last = history.last else { return nil }
-        return UsageSample(timestamp: max(last.timestamp, clampedNow), fiveHourPercent: last.fiveHourPercent)
+        plottedHistory.last
     }
 
     private var hourTicks: [Date] {
@@ -426,16 +425,16 @@ struct SessionUsageChart: View {
                     y: .value("Pace", 0),
                     series: .value("Series", "pace")
                 )
-                .foregroundStyle(DS.Outline.soft.opacity(0.55))
-                .lineStyle(StrokeStyle(lineWidth: 1, dash: [3, 4]))
+                .foregroundStyle(DS.Text.muted.opacity(0.65))
+                .lineStyle(StrokeStyle(lineWidth: 1.25, dash: [4, 4]))
 
                 LineMark(
                     x: .value("Time", sessionEnd),
                     y: .value("Pace", 100),
                     series: .value("Series", "pace")
                 )
-                .foregroundStyle(DS.Outline.soft.opacity(0.55))
-                .lineStyle(StrokeStyle(lineWidth: 1, dash: [3, 4]))
+                .foregroundStyle(DS.Text.muted.opacity(0.65))
+                .lineStyle(StrokeStyle(lineWidth: 1.25, dash: [4, 4]))
 
                 ForEach(hourTicks, id: \.self) { tick in
                     RuleMark(x: .value("Hour", tick))
