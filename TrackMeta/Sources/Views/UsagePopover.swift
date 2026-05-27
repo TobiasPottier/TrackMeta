@@ -327,6 +327,60 @@ private struct UsageBar: View {
     }
 }
 
+// MARK: - Usage forecast
+//
+// Linear least-squares fit over the in-window history projects where usage
+// will end up. The result is the endpoint of the forecast segment that begins
+// at the current sample — either at the session end, or earlier if the slope
+// would push usage past 100% before the window closes.
+
+struct UsageForecast {
+    let endTime: Date
+    let endValue: Double
+}
+
+func linearUsageForecast(
+    samples: [UsageSample],
+    valueFor: (UsageSample) -> Double,
+    currentTime: Date,
+    currentValue: Double,
+    until endTime: Date
+) -> UsageForecast? {
+    guard endTime > currentTime else { return nil }
+    let scoped = samples.filter { $0.timestamp <= currentTime }
+    guard scoped.count >= 2,
+          let first = scoped.first,
+          let last = scoped.last,
+          last.timestamp.timeIntervalSince(first.timestamp) >= 60 else { return nil }
+
+    let baseTime = first.timestamp.timeIntervalSince1970
+    let xs = scoped.map { $0.timestamp.timeIntervalSince1970 - baseTime }
+    let ys = scoped.map(valueFor)
+    let n = Double(scoped.count)
+    let sumX = xs.reduce(0, +)
+    let sumY = ys.reduce(0, +)
+    let sumXY = zip(xs, ys).reduce(0) { $0 + $1.0 * $1.1 }
+    let sumX2 = xs.reduce(0) { $0 + $1 * $1 }
+    let denom = n * sumX2 - sumX * sumX
+    guard denom > 0 else { return nil }
+    let slope = (n * sumXY - sumX * sumY) / denom
+
+    let deltaSeconds = endTime.timeIntervalSince(currentTime)
+    let projectedRaw = currentValue + slope * deltaSeconds
+
+    if slope > 0, projectedRaw > 100 {
+        let secondsToCap = (100 - currentValue) / slope
+        if secondsToCap > 0, secondsToCap < deltaSeconds {
+            return UsageForecast(
+                endTime: currentTime.addingTimeInterval(secondsToCap),
+                endValue: 100
+            )
+        }
+    }
+    let clamped = min(100, max(0, projectedRaw))
+    return UsageForecast(endTime: endTime, endValue: clamped)
+}
+
 // MARK: - Session usage chart
 
 struct SessionUsageChart: View {
@@ -370,6 +424,17 @@ struct SessionUsageChart: View {
         plottedHistory.last
     }
 
+    private var forecast: UsageForecast? {
+        guard let marker = markerSample else { return nil }
+        return linearUsageForecast(
+            samples: windowedHistory,
+            valueFor: { $0.fiveHourPercent },
+            currentTime: marker.timestamp,
+            currentValue: marker.fiveHourPercent,
+            until: sessionEnd
+        )
+    }
+
     private var hourTicks: [Date] {
         let cal = Calendar.current
         let comps = cal.dateComponents([.year, .month, .day, .hour], from: sessionStart)
@@ -398,10 +463,18 @@ struct SessionUsageChart: View {
                     .foregroundStyle(DS.Text.muted)
                 Spacer()
                 if let last = windowedHistory.last {
-                    Text("\(Int(last.fiveHourPercent.rounded()))% used")
-                        .dsType(.bodySm)
-                        .foregroundStyle(DS.Text.secondary)
-                        .monospacedDigit()
+                    HStack(spacing: DS.Space.xs) {
+                        Text("\(Int(last.fiveHourPercent.rounded()))% used")
+                            .dsType(.bodySm)
+                            .foregroundStyle(DS.Text.secondary)
+                            .monospacedDigit()
+                        if let forecast {
+                            Text("· \(Int(forecast.endValue.rounded()))% projected")
+                                .dsType(.bodySm)
+                                .foregroundStyle(DS.Text.muted)
+                                .monospacedDigit()
+                        }
+                    }
                 }
             }
 
@@ -463,6 +536,33 @@ struct SessionUsageChart: View {
                     .symbolSize(34)
                     .foregroundStyle(chartColor)
                 }
+
+                if let markerSample, let forecast {
+                    LineMark(
+                        x: .value("Time", markerSample.timestamp),
+                        y: .value("Usage", markerSample.fiveHourPercent),
+                        series: .value("Series", "forecast")
+                    )
+                    .foregroundStyle(chartColor.opacity(0.7))
+                    .lineStyle(StrokeStyle(lineWidth: 1.25, dash: [3, 3]))
+                    .interpolationMethod(.linear)
+
+                    LineMark(
+                        x: .value("Time", forecast.endTime),
+                        y: .value("Usage", forecast.endValue),
+                        series: .value("Series", "forecast")
+                    )
+                    .foregroundStyle(chartColor.opacity(0.7))
+                    .lineStyle(StrokeStyle(lineWidth: 1.25, dash: [3, 3]))
+                    .interpolationMethod(.linear)
+
+                    PointMark(
+                        x: .value("Forecast", forecast.endTime),
+                        y: .value("Usage", forecast.endValue)
+                    )
+                    .symbolSize(20)
+                    .foregroundStyle(chartColor.opacity(0.55))
+                }
             }
             .chartXScale(domain: sessionStart...sessionEnd)
             .chartYScale(domain: 0...100)
@@ -522,6 +622,17 @@ struct WeeklyUsageChart: View {
 
     private var markerSample: UsageSample? { plottedHistory.last }
 
+    private var forecast: UsageForecast? {
+        guard let marker = markerSample else { return nil }
+        return linearUsageForecast(
+            samples: windowedHistory,
+            valueFor: { $0.sevenDayPercent },
+            currentTime: marker.timestamp,
+            currentValue: marker.sevenDayPercent,
+            until: weekEnd
+        )
+    }
+
     private var dayTicks: [Date] {
         let cal = Calendar.current
         let comps = cal.dateComponents([.year, .month, .day], from: weekStart)
@@ -545,10 +656,18 @@ struct WeeklyUsageChart: View {
                     .foregroundStyle(DS.Text.muted)
                 Spacer()
                 if let last = windowedHistory.last {
-                    Text("\(Int(last.sevenDayPercent.rounded()))% used")
-                        .dsType(.bodySm)
-                        .foregroundStyle(DS.Text.secondary)
-                        .monospacedDigit()
+                    HStack(spacing: DS.Space.xs) {
+                        Text("\(Int(last.sevenDayPercent.rounded()))% used")
+                            .dsType(.bodySm)
+                            .foregroundStyle(DS.Text.secondary)
+                            .monospacedDigit()
+                        if let forecast {
+                            Text("· \(Int(forecast.endValue.rounded()))% projected")
+                                .dsType(.bodySm)
+                                .foregroundStyle(DS.Text.muted)
+                                .monospacedDigit()
+                        }
+                    }
                 }
             }
 
@@ -609,6 +728,33 @@ struct WeeklyUsageChart: View {
                     )
                     .symbolSize(34)
                     .foregroundStyle(chartColor)
+                }
+
+                if let markerSample, let forecast {
+                    LineMark(
+                        x: .value("Time", markerSample.timestamp),
+                        y: .value("Usage", markerSample.sevenDayPercent),
+                        series: .value("Series", "forecast")
+                    )
+                    .foregroundStyle(chartColor.opacity(0.7))
+                    .lineStyle(StrokeStyle(lineWidth: 1.25, dash: [3, 3]))
+                    .interpolationMethod(.linear)
+
+                    LineMark(
+                        x: .value("Time", forecast.endTime),
+                        y: .value("Usage", forecast.endValue),
+                        series: .value("Series", "forecast")
+                    )
+                    .foregroundStyle(chartColor.opacity(0.7))
+                    .lineStyle(StrokeStyle(lineWidth: 1.25, dash: [3, 3]))
+                    .interpolationMethod(.linear)
+
+                    PointMark(
+                        x: .value("Forecast", forecast.endTime),
+                        y: .value("Usage", forecast.endValue)
+                    )
+                    .symbolSize(20)
+                    .foregroundStyle(chartColor.opacity(0.55))
                 }
             }
             .chartXScale(domain: weekStart...weekEnd)
