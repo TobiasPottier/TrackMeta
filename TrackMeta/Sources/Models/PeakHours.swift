@@ -11,10 +11,10 @@ struct PeakHoursWindow: Equatable {
     let timeZone: TimeZone
 
     static let claudeDefault = PeakHoursWindow(
-        startHour: 8,
-        endHour: 14,
+        startHour: 14,
+        endHour: 20,
         weekdaysOnly: true,
-        timeZone: TimeZone(identifier: "America/New_York") ?? .current
+        timeZone: TimeZone(identifier: "Europe/Brussels") ?? .current
     )
 
     func status(at date: Date = Date()) -> PeakHoursStatus {
