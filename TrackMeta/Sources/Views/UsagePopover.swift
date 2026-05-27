@@ -381,9 +381,12 @@ func linearUsageForecast(
     let deltaSeconds = endTime.timeIntervalSince(currentTime)
     let projectedRaw = currentValue + slope * deltaSeconds
 
-    if slope > 0, projectedRaw > 100 {
+    // If the projection rounds to 100% (within-window cap, or just close
+    // enough that the label would say "100"), report the ETA when the slope
+    // would actually cross 100 rather than the rounded end-of-window value.
+    if slope > 0, currentValue < 100, projectedRaw.rounded() >= 100 {
         let secondsToCap = (100 - currentValue) / slope
-        if secondsToCap > 0, secondsToCap < deltaSeconds {
+        if secondsToCap > 0 {
             return UsageForecast(
                 endTime: currentTime.addingTimeInterval(secondsToCap),
                 endValue: 100
