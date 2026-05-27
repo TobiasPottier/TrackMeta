@@ -14,7 +14,7 @@ Beyond the core usage readout, the app also:
 - Buffers per-session metadata locally (first-seen time, recent events, per-minute activity buckets) so each tile can show an elapsed timer, an activity sparkline, and a short event log even though the server itself is stateless.
 - Persists a rolling buffer of 5h-window usage samples and plots them as a Swift Charts history in the dashboard.
 - Registers a process-wide ⌃⌥Space global hotkey (Carbon API) that toggles the dashboard window.
-- Opens a single dashboard window (920x700, "Modern Refinement" near-black surface + amber accent) that shows the hero usage stat, peak hours / 5h / 7d meta row, the usage chart, and the Sessions panel. A **Pin** button in the header toggles the dashboard's window level to `.floating` so it stays above other apps — this is the only floating UI (there is no separate floating panel).
+- Opens a single dashboard window (920x700, "Modern Refinement" slate-950 surface + signal-green accent) that shows the hero usage stat, peak hours / 5h / 7d meta row, the usage chart, and the Sessions panel. A **Pin** button in the header toggles the dashboard's window level to `.floating` so it stays above other apps — this is the only floating UI (there is no separate floating panel).
 - Raises the Settings window above the status bar via a FloatingWindowConfigurator.
 
 Credentials come from the Claude Code CLI's OAuth access token, read out of the macOS Keychain (service `Claude Code-credentials`, JSON value, `claudeAiOauth.accessToken`). The app does not store credentials of its own, but it **does** persist four UserDefaults keys: `usageHistory.v1` (sample buffer), `TrackMeta.sessionsPinned` + `TrackMeta.sessionsPinnedCollapsed` (notch-drawer toggles), and `TrackMeta.dashboardPinned` (dashboard floating state).
@@ -69,7 +69,7 @@ Sources/
     SessionHistoryStore.swift       SessionHistory + SessionHistoryIngestion (pure); per-session events / activity buckets / firstSeenAt
   ViewModels/UsageViewModel.swift   @Observable; 60s usage loop + 1s session loop; owns sessions, sessionHistories, expandedSessionIds, autoExpand window, sessionsPinned, sessionsPinnedCollapsed, unifiedFolderGroups (live sessions grouped by cwd)
   Views/
-    DesignSystem.swift              "Modern Refinement" tokens — DS.Surface (near-black, #131315 base), DS.Text, DS.Primary (amber #FBBF24), DS.Outline. The amber accent is reserved for primary actions / "needs input" hero state.
+    DesignSystem.swift              "Modern Refinement" tokens — DS.Surface (slate-950, #0F172A base), DS.Text (slate grays), DS.Primary (signal green #22C55E), DS.Outline. The signal-green accent is reserved for primary actions / "needs input" hero state. DS.Status.success is teal-300 (#5EEAD4) deliberately distinct from the green accent.
     MenuBarLabel.swift              fallback NSStatusItem indicator (used on displays without a notch)
     UsagePopover.swift              popover surface (notch-attached NotchIslandShape variants), Swift Charts usage history
     DashboardView.swift             single-pane dashboard: header (Settings / Pin / Refresh), hero, meta row (peak / 5h / 7d), chart, Sessions card
@@ -108,4 +108,4 @@ Key invariants to preserve when editing:
 - UserDefaults keys `usageHistory.v1`, `TrackMeta.sessionsPinned`, `TrackMeta.sessionsPinnedCollapsed`, and `TrackMeta.dashboardPinned` are persistence contracts. Renaming any of them wipes user state on upgrade.
 - `TrackMeta.entitlements` only needs `com.apple.security.app-sandbox` + `com.apple.security.network.client`. Do not re-add Apple Events / iTerm / user-selected-files entitlements — they were dropped when the iTerm launcher was removed.
 - The notch-pill tap action calls `openDashboard()` (always show), not `toggleDashboard()` — toggling caused the dashboard to close on the same click that re-focused it. The status-bar icon click still toggles.
-- Use `DS.*` design tokens from `DesignSystem.swift` for colors / spacing / type. The older `BrandPalette` "midnight-blue" tokens have been replaced — don't reintroduce them or hand-roll hex literals in views.
+- Use `DS.*` design tokens from `DesignSystem.swift` for colors / spacing / type. `BrandPalette` (in `TrackerLogo.swift`) is a legacy shim that re-exports `DS.*` so older view code still compiles — don't hand-roll hex literals in views, route everything through `DS.*` instead.

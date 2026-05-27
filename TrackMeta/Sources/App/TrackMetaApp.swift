@@ -95,7 +95,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         window.isReleasedWhenClosed = false
         window.titlebarAppearsTransparent = true
         window.titleVisibility = .hidden
-        window.backgroundColor = NSColor(red: 0x13/255.0, green: 0x13/255.0, blue: 0x15/255.0, alpha: 1.0)
+        window.backgroundColor = NSColor(red: 0x0F/255.0, green: 0x17/255.0, blue: 0x2A/255.0, alpha: 1.0)
         window.appearance = NSAppearance(named: .darkAqua)
         window.contentViewController = host
         window.setContentSize(initialSize)

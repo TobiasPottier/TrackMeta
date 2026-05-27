@@ -1,8 +1,8 @@
 import SwiftUI
 
-/// Modern Refinement design tokens.
+/// Modern Refinement design tokens — Slate-950 + Signal Green (IDE/terminal).
 ///
-/// Anchored on a near-black surface with a warm amber accent reserved for
+/// Anchored on a deep slate surface with a signal-green accent reserved for
 /// primary actions and active states. Depth comes from tonal layering and
 /// 1px low-contrast outlines, not shadows.
 enum DS {
@@ -10,58 +10,58 @@ enum DS {
     // MARK: - Surfaces
 
     enum Surface {
-        static let base               = Color(hex: 0x131315)
-        static let dim                = Color(hex: 0x131315)
-        static let bright             = Color(hex: 0x39393B)
-        static let containerLowest    = Color(hex: 0x0E0E10)
-        static let containerLow       = Color(hex: 0x1C1B1D)
-        static let container          = Color(hex: 0x201F22)
-        static let containerHigh      = Color(hex: 0x2A2A2C)
-        static let containerHighest   = Color(hex: 0x353437)
+        static let base               = Color(hex: 0x0F172A)
+        static let dim                = Color(hex: 0x0B1220)
+        static let bright             = Color(hex: 0x3A475F)
+        static let containerLowest    = Color(hex: 0x020617)
+        static let containerLow       = Color(hex: 0x131C33)
+        static let container          = Color(hex: 0x1B2336)
+        static let containerHigh      = Color(hex: 0x232D44)
+        static let containerHighest   = Color(hex: 0x2D3850)
     }
 
     // MARK: - Foreground
 
     enum Text {
-        /// Primary content (#E5E1E4)
-        static let primary       = Color(hex: 0xE5E1E4)
-        /// Secondary metadata, warm cast (#D3C5AC)
-        static let secondary     = Color(hex: 0xD3C5AC)
-        /// Muted / deactivated (#9C8F79)
-        static let muted         = Color(hex: 0x9C8F79)
-        /// Very low contrast, structural marks (#4F4633)
-        static let faint         = Color(hex: 0x4F4633)
-        /// Black ink for use on amber.
-        static let onPrimary     = Color(hex: 0x402D00)
+        /// Primary content (#F8FAFC — slate-50)
+        static let primary       = Color(hex: 0xF8FAFC)
+        /// Secondary metadata (#CBD5E1 — slate-300)
+        static let secondary     = Color(hex: 0xCBD5E1)
+        /// Muted / deactivated (#94A3B8 — slate-400)
+        static let muted         = Color(hex: 0x94A3B8)
+        /// Very low contrast, structural marks (#475569 — slate-600)
+        static let faint         = Color(hex: 0x475569)
+        /// Near-black with a green undertone for text on the accent.
+        static let onPrimary     = Color(hex: 0x02110A)
     }
 
     // MARK: - Brand
 
     enum Primary {
-        /// Amber gold — the only chromatic accent. Use sparingly.
-        static let accent        = Color(hex: 0xFBBF24)
+        /// Signal green — the only chromatic accent. Use sparingly.
+        static let accent        = Color(hex: 0x22C55E)
         /// Soft tint for tinted backgrounds (12–22% alpha applied at site).
-        static let accentSoft    = Color(hex: 0xFBBF24)
+        static let accentSoft    = Color(hex: 0x22C55E)
         /// High contrast pale variant for hover/glow.
-        static let accentPale    = Color(hex: 0xFFE1A7)
-        static let onAccent      = Color(hex: 0x402D00)
+        static let accentPale    = Color(hex: 0x86EFAC)
+        static let onAccent      = Color(hex: 0x02110A)
     }
 
     // MARK: - Outlines
 
     enum Outline {
-        /// Defining outline (#9C8F79). Use at low opacity for chrome.
-        static let strong        = Color(hex: 0x9C8F79)
-        /// Subtle structural border (#4F4633).
-        static let soft          = Color(hex: 0x4F4633)
+        /// Defining outline (#475569 — slate-600). Use at low opacity for chrome.
+        static let strong        = Color(hex: 0x475569)
+        /// Subtle structural border (#1E293B — slate-800).
+        static let soft          = Color(hex: 0x1E293B)
     }
 
     // MARK: - Status
 
     enum Status {
-        static let success       = Color(hex: 0x6FCF97)   // calm green
-        static let warning       = Color(hex: 0xFBBF24)   // reuse amber
-        static let danger        = Color(hex: 0xFFB4AB)   // soft red
+        static let success       = Color(hex: 0x5EEAD4)   // teal-300 — distinct from the green accent
+        static let warning       = Color(hex: 0xFBBF24)   // amber-400 — approaching cap
+        static let danger        = Color(hex: 0xF87171)   // red-400 — softened error
     }
 
     // MARK: - Radii
