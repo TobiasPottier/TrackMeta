@@ -473,7 +473,7 @@ struct SessionUsageChart: View {
     }()
 
     private func forecastLabel(_ forecast: UsageForecast) -> String {
-        if forecast.endValue >= 100 {
+        if Int(forecast.endValue.rounded()) >= 100 {
             return "hits 100% at \(Self.boundaryFormatter.string(from: forecast.endTime))"
         }
         return "\(Int(forecast.endValue.rounded()))% by reset"
@@ -680,7 +680,7 @@ struct WeeklyUsageChart: View {
     }()
 
     private func forecastLabel(_ forecast: UsageForecast) -> String {
-        if forecast.endValue >= 100 {
+        if Int(forecast.endValue.rounded()) >= 100 {
             return "hits 100% at \(Self.forecastFormatter.string(from: forecast.endTime))"
         }
         return "\(Int(forecast.endValue.rounded()))% by reset"
