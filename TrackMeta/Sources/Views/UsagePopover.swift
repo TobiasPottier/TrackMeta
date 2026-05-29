@@ -329,13 +329,13 @@ private struct UsageBar: View {
 
 // MARK: - Usage forecast
 //
-// Exponentially weighted least-squares fit over the in-window history projects
-// where usage will end up. Recent samples dominate the slope (weight decays
-// with the supplied `halfLife`), so a flat early period followed by a recent
-// ramp produces a steep forecast instead of a line averaged across the whole
-// window. The result is the endpoint of the forecast segment that begins at
-// the current sample — either at the session end, or earlier if the slope
-// would push usage past 100% before the window closes.
+// Ordinary least-squares fit over the in-window history projects where usage
+// will end up. The slope is the average burn rate across the whole window, so
+// it does not collapse when the most recent samples flatten — a short pause, or
+// the idle gap around an app relaunch, no longer yanks the projection back under
+// 100%. The result is the endpoint of the forecast segment that begins at the
+// current sample — either at the session end, or earlier if the slope would push
+// usage past 100% before the window closes.
 
 struct UsageForecast {
     let endTime: Date
@@ -347,8 +347,7 @@ func linearUsageForecast(
     valueFor: (UsageSample) -> Double,
     currentTime: Date,
     currentValue: Double,
-    until endTime: Date,
-    halfLife: TimeInterval
+    until endTime: Date
 ) -> UsageForecast? {
     guard endTime > currentTime else { return nil }
     let scoped = samples.filter { $0.timestamp <= currentTime }
@@ -358,22 +357,18 @@ func linearUsageForecast(
           last.timestamp.timeIntervalSince(first.timestamp) >= 60 else { return nil }
 
     let referenceTime = last.timestamp.timeIntervalSince1970
-    let decay = log(2.0) / max(halfLife, 1)
     let xs = scoped.map { $0.timestamp.timeIntervalSince1970 - referenceTime }
     let ys = scoped.map(valueFor)
-    let ws = xs.map { exp(decay * $0) }  // xs are <= 0, so weights are <= 1
-
-    let sumW = ws.reduce(0, +)
-    guard sumW > 0 else { return nil }
-    let meanX = zip(ws, xs).reduce(0) { $0 + $1.0 * $1.1 } / sumW
-    let meanY = zip(ws, ys).reduce(0) { $0 + $1.0 * $1.1 } / sumW
+    let n = Double(scoped.count)
+    let meanX = xs.reduce(0, +) / n
+    let meanY = ys.reduce(0, +) / n
 
     var num = 0.0
     var den = 0.0
     for i in xs.indices {
         let dx = xs[i] - meanX
-        num += ws[i] * dx * (ys[i] - meanY)
-        den += ws[i] * dx * dx
+        num += dx * (ys[i] - meanY)
+        den += dx * dx
     }
     guard den > 0 else { return nil }
     let slope = num / den
@@ -447,8 +442,7 @@ struct SessionUsageChart: View {
             valueFor: { $0.fiveHourPercent },
             currentTime: marker.timestamp,
             currentValue: marker.fiveHourPercent,
-            until: sessionEnd,
-            halfLife: 30 * 60
+            until: sessionEnd
         )
     }
 
@@ -653,8 +647,7 @@ struct WeeklyUsageChart: View {
             valueFor: { $0.sevenDayPercent },
             currentTime: marker.timestamp,
             currentValue: marker.sevenDayPercent,
-            until: weekEnd,
-            halfLife: 12 * 60 * 60
+            until: weekEnd
         )
     }
 
